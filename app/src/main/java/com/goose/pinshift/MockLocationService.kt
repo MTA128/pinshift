@@ -1,109 +1,276 @@
 package com.goose.pinshift
 
-import android.app.*
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
+import android.app.Service
 import android.content.Intent
 import android.location.Location
 import android.location.LocationManager
 import android.location.provider.ProviderProperties
-import android.os.*
+import android.os.Handler
+import android.os.IBinder
+import android.os.Looper
+import android.os.SystemClock
 import java.util.Locale
+import kotlin.math.*
 
 class MockLocationService : Service() {
     companion object {
-        const val ACTION_START="com.goose.pinshift.START"
-        const val ACTION_MOVE="com.goose.pinshift.MOVE"
-        const val ACTION_STOP="com.goose.pinshift.STOP"
-        const val ACTION_STATUS="com.goose.pinshift.STATUS"
-        const val EXTRA_LAT="latitude"
-        const val EXTRA_LON="longitude"
-        const val EXTRA_MESSAGE="message"
-        @Volatile var running=false
+        const val ACTION_START = "com.goose.pinshift.START"
+        const val ACTION_ROUTE = "com.goose.pinshift.ROUTE"
+        const val ACTION_STOP = "com.goose.pinshift.STOP"
+        const val ACTION_STATUS = "com.goose.pinshift.STATUS"
+        const val EXTRA_LAT = "latitude"
+        const val EXTRA_LON = "longitude"
+        const val EXTRA_FROM_LAT = "fromLatitude"
+        const val EXTRA_FROM_LON = "fromLongitude"
+        const val EXTRA_SPEED = "kmh"
+        const val EXTRA_MESSAGE = "message"
+        private const val CHANNEL_ID = "pinshift_location_v2"
+        private const val NOTIFICATION_ID = 62
+        @Volatile var running = false
             private set
     }
-    private lateinit var lm: LocationManager
-    private val handler=Handler(Looper.getMainLooper())
-    private var latitude=51.5074
-    private var longitude=-0.1278
-    private val providers=mutableSetOf<String>()
-    private val clock=object: Runnable {
+    private lateinit var locationManager: LocationManager
+    private lateinit var notifications: NotificationManager
+    private val handler = Handler(Looper.getMainLooper())
+    private val providers = linkedSetOf<String>()
+    private var latitude = 51.5074
+    private var longitude = -0.1278
+    private var bearing = 0f
+    private var speedMs = 0f
+    private var route: Route? = null
+    private var lastStatusTime = 0L
+
+    private data class Route(
+        val fromLat: Double, val fromLon: Double,
+        val toLat: Double, val toLon: Double,
+        val metres: Double, val speedMetresPerSecond: Double,
+        val startedAt: Long
+    )
+
+    private val worker = object : Runnable {
         override fun run() {
             if (!running) return
-            try { sendPosition(); handler.postDelayed(this,1000) }
-            catch (e: Exception) { notifyStatus("Update failed: "+e.message); stopUpdates() }
+            try {
+                advanceRoute()
+                publishPosition()
+                val now = SystemClock.elapsedRealtime()
+                if (now - lastStatusTime >= 5000L) {
+                    lastStatusTime = now
+                    val journey = route
+                    if (journey != null) {
+                        val completed = progress(journey)
+                        report(String.format(Locale.US, "Travelling at %.0f km/h • %.0f%% complete",
+                            journey.speedMetresPerSecond * 3.6, completed * 100.0))
+                    }
+                }
+                handler.postDelayed(this, 1000L)
+            } catch (error: Exception) {
+                report("Mock GPS stopped: " + (error.localizedMessage ?: "provider failure"))
+                shutdown()
+            }
         }
     }
+
     override fun onCreate() {
         super.onCreate()
-        lm=getSystemService(LocationManager::class.java)
-        getSystemService(NotificationManager::class.java).createNotificationChannel(
-            NotificationChannel("location", "PinShift running", NotificationManager.IMPORTANCE_LOW)
-        )
+        locationManager = getSystemService(LocationManager::class.java)
+        notifications = getSystemService(NotificationManager::class.java)
+        notifications.createNotificationChannel(NotificationChannel(
+            CHANNEL_ID, "PinShift simulated location", NotificationManager.IMPORTANCE_LOW
+        ))
     }
-    override fun onBind(intent:Intent?): IBinder?=null
-    override fun onStartCommand(intent:Intent?, flags:Int, startId:Int):Int {
-        if (intent?.action==ACTION_STOP) { stopUpdates(); notifyStatus("Mock location stopped"); return START_NOT_STICKY }
-        val lat=intent?.getDoubleExtra(EXTRA_LAT,Double.NaN) ?: Double.NaN
-        val lon=intent?.getDoubleExtra(EXTRA_LON,Double.NaN) ?: Double.NaN
-        if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) {
-            notifyStatus("Invalid coordinates"); return START_NOT_STICKY
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        if (intent?.action == ACTION_STOP) {
+            shutdown()
+            report("Simulation stopped. Normal Android location restored.")
+            return START_NOT_STICKY
         }
-        latitude=lat; longitude=lon
+        val targetLat = intent?.getDoubleExtra(EXTRA_LAT, Double.NaN) ?: Double.NaN
+        val targetLon = intent?.getDoubleExtra(EXTRA_LON, Double.NaN) ?: Double.NaN
+        if (!valid(targetLat, targetLon)) {
+            report("Could not start: invalid destination coordinates")
+            if (!running) stopSelf()
+            return START_NOT_STICKY
+        }
         try {
-            if (!running) {
-                startForeground(1,notification())
-                val fine=ProviderProperties.Builder().setAccuracy(ProviderProperties.ACCURACY_FINE)
-                    .setPowerUsage(ProviderProperties.POWER_USAGE_LOW).build()
-                for (name in listOf(LocationManager.GPS_PROVIDER,LocationManager.NETWORK_PROVIDER)) {
-                    try { lm.removeTestProvider(name) } catch (_:IllegalArgumentException) {}
-                    lm.addTestProvider(name,fine)
-                    providers.add(name)
-                    lm.setTestProviderEnabled(name,true)
-                }
-                running=true
-                clock.run()
+            val newRoute = if (intent?.action == ACTION_ROUTE) {
+                val a = intent.getDoubleExtra(EXTRA_FROM_LAT, Double.NaN)
+                val b = intent.getDoubleExtra(EXTRA_FROM_LON, Double.NaN)
+                val kmh = intent.getFloatExtra(EXTRA_SPEED, 25f).coerceIn(1f, 110f)
+                if (!valid(a, b)) throw IllegalArgumentException("Invalid route starting point")
+                Route(a, b, targetLat, targetLon, metres(a, b, targetLat, targetLon),
+                    kmh.toDouble() / 3.6, SystemClock.elapsedRealtime())
+            } else null
+
+            route = newRoute
+            if (newRoute == null) {
+                latitude = targetLat
+                longitude = targetLon
+                speedMs = 0f
+                bearing = 0f
             } else {
-                sendPosition()
-                getSystemService(NotificationManager::class.java).notify(1,notification())
+                latitude = newRoute.fromLat
+                longitude = newRoute.fromLon
+                speedMs = newRoute.speedMetresPerSecond.toFloat()
+                bearing = direction(newRoute.fromLat, newRoute.fromLon, newRoute.toLat, newRoute.toLon)
             }
-            notifyStatus(String.format(Locale.US,"Mock location: %.6f, %.6f",latitude,longitude))
-        } catch (e:Exception) { notifyStatus("Could not start: "+e.message); stopUpdates() }
+            if (!running) {
+                startForeground(NOTIFICATION_ID, notification())
+                createProviders()
+                running = true
+                worker.run()
+            } else {
+                publishPosition()
+                notifications.notify(NOTIFICATION_ID, notification())
+            }
+            if (newRoute != null) report("Straight-line journey started")
+            else report(String.format(Locale.US, "Position fixed at %.6f, %.6f", latitude, longitude))
+        } catch (error: Exception) {
+            report("Could not start location engine: " + (error.localizedMessage ?: "unknown error"))
+            shutdown()
+        }
         return START_NOT_STICKY
     }
-    private fun sendPosition() {
-        for (name in providers) {
-            val position=Location(name)
-            position.latitude=latitude
-            position.longitude=longitude
-            position.accuracy=2f
-            position.time=System.currentTimeMillis()
-            position.elapsedRealtimeNanos=SystemClock.elapsedRealtimeNanos()
-            lm.setTestProviderLocation(name,position)
+
+    private fun valid(lat: Double, lon: Double) =
+        lat.isFinite() && lon.isFinite() && lat in -90.0..90.0 && lon in -180.0..180.0
+
+    private fun createProviders() {
+        val precise = ProviderProperties.Builder()
+            .setAccuracy(ProviderProperties.ACCURACY_FINE)
+            .setPowerUsage(ProviderProperties.POWER_USAGE_LOW)
+            .setHasBearingSupport(true)
+            .setHasAltitudeSupport(true)
+            .setHasSpeedSupport(true).build()
+        val network = ProviderProperties.Builder()
+            .setAccuracy(ProviderProperties.ACCURACY_COARSE)
+            .setPowerUsage(ProviderProperties.POWER_USAGE_LOW).build()
+
+        for ((name, props) in listOf(LocationManager.GPS_PROVIDER to precise,
+            LocationManager.NETWORK_PROVIDER to network)) {
+            try { locationManager.removeTestProvider(name) } catch (_: Exception) { }
+            try {
+                locationManager.addTestProvider(name, props)
+                providers.add(name)
+                locationManager.setTestProviderEnabled(name, true)
+            } catch (error: Exception) {
+                if (name == LocationManager.GPS_PROVIDER) throw error
+            }
+        }
+        if (providers.isEmpty()) throw IllegalStateException("No test provider could be registered")
+    }
+
+    private fun publishPosition() {
+        for (provider in providers) {
+            val location = Location(provider).apply {
+                latitude = this@MockLocationService.latitude
+                longitude = this@MockLocationService.longitude
+                accuracy = if (provider == LocationManager.GPS_PROVIDER) 3f else 30f
+                altitude = 0.0
+                time = System.currentTimeMillis()
+                elapsedRealtimeNanos = SystemClock.elapsedRealtimeNanos()
+                speed = speedMs
+                bearing = this@MockLocationService.bearing
+            }
+            locationManager.setTestProviderLocation(provider, location)
         }
     }
-    private fun notification():Notification {
-        val show=PendingIntent.getActivity(this,0,Intent(this,MainActivity::class.java),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        val stop=PendingIntent.getService(this,1,Intent(this,MockLocationService::class.java).setAction(ACTION_STOP),
-            PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
-        return Notification.Builder(this,"location").setSmallIcon(android.R.drawable.ic_menu_mylocation)
-            .setContentTitle("PinShift active")
-            .setContentText(String.format(Locale.US,"%.6f, %.6f",latitude,longitude))
-            .setContentIntent(show).setOngoing(true)
-            .addAction(Notification.Action.Builder(null,"Stop",stop).build()).build()
+
+    private fun progress(route: Route) =
+        if (route.metres < 0.5) 1.0
+        else (((SystemClock.elapsedRealtime() - route.startedAt).coerceAtLeast(0L) / 1000.0)
+            * route.speedMetresPerSecond / route.metres).coerceIn(0.0, 1.0)
+
+    private fun advanceRoute() {
+        val current = route ?: return
+        val p = progress(current)
+        val coordinates = greatCircle(current.fromLat, current.fromLon,
+            current.toLat, current.toLon, p)
+        latitude = coordinates.first
+        longitude = coordinates.second
+        if (p >= 1.0) {
+            route = null
+            speedMs = 0f
+            report("Route finished. Holding the destination location.")
+            notifications.notify(NOTIFICATION_ID, notification())
+        }
     }
-    private fun notifyStatus(message:String) {
-        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_MESSAGE,message))
+
+    private fun metres(a: Double, b: Double, c: Double, d: Double): Double {
+        val diffLat = Math.toRadians(c - a)
+        val diffLon = Math.toRadians(d - b)
+        val h = sin(diffLat / 2.0).pow(2.0) + cos(Math.toRadians(a)) *
+            cos(Math.toRadians(c)) * sin(diffLon / 2.0).pow(2.0)
+        return 6371000.0 * 2.0 * atan2(sqrt(h.coerceIn(0.0, 1.0)), sqrt((1.0 - h).coerceAtLeast(0.0)))
     }
-    private fun stopUpdates() {
-        handler.removeCallbacks(clock); running=false
-        for (name in providers.toList()) { try { lm.removeTestProvider(name) } catch (_:Exception) {} }
+
+    private fun direction(a: Double, b: Double, c: Double, d: Double): Float {
+        val dLon = Math.toRadians(d - b)
+        val y = sin(dLon) * cos(Math.toRadians(c))
+        val x = cos(Math.toRadians(a)) * sin(Math.toRadians(c)) -
+            sin(Math.toRadians(a)) * cos(Math.toRadians(c)) * cos(dLon)
+        return ((Math.toDegrees(atan2(y, x)) + 360.0) % 360.0).toFloat()
+    }
+
+    private fun greatCircle(a: Double, b: Double, c: Double, d: Double, fraction: Double): Pair<Double, Double> {
+        val radians = metres(a, b, c, d) / 6371000.0
+        if (radians < 1e-10 || fraction >= 1.0) return Pair(c, d)
+        val m = sin((1.0 - fraction) * radians) / sin(radians)
+        val n = sin(fraction * radians) / sin(radians)
+        val lat1 = Math.toRadians(a); val lon1 = Math.toRadians(b)
+        val lat2 = Math.toRadians(c); val lon2 = Math.toRadians(d)
+        val x = m * cos(lat1) * cos(lon1) + n * cos(lat2) * cos(lon2)
+        val y = m * cos(lat1) * sin(lon1) + n * cos(lat2) * sin(lon2)
+        val z = m * sin(lat1) + n * sin(lat2)
+        return Pair(Math.toDegrees(atan2(z, sqrt(x * x + y * y))),
+            Math.toDegrees(atan2(y, x)))
+    }
+
+    private fun notification(): Notification {
+        val open = PendingIntent.getActivity(this, 0, Intent(this, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        val stop = PendingIntent.getService(this, 1,
+            Intent(this, MockLocationService::class.java).setAction(ACTION_STOP),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE)
+        return Notification.Builder(this, CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_menu_mylocation)
+            .setContentTitle("PinShift • simulation active")
+            .setContentText(String.format(Locale.US, "Position: %.6f, %.6f", latitude, longitude))
+            .setContentIntent(open).setOngoing(true).setOnlyAlertOnce(true)
+            .addAction(Notification.Action.Builder(null, "STOP", stop).build())
+            .build()
+    }
+
+    private fun report(message: String) {
+        sendBroadcast(Intent(ACTION_STATUS).setPackage(packageName).putExtra(EXTRA_MESSAGE, message))
+    }
+
+    private fun shutdown() {
+        handler.removeCallbacks(worker)
+        running = false
+        route = null
+        speedMs = 0f
+        for (provider in providers.toList()) {
+            try { locationManager.removeTestProvider(provider) } catch (_: Exception) { }
+        }
         providers.clear()
         stopForeground(STOP_FOREGROUND_REMOVE)
         stopSelf()
     }
+
     override fun onDestroy() {
-        handler.removeCallbacks(clock); running=false
-        for (name in providers.toList()) { try { lm.removeTestProvider(name) } catch (_:Exception) {} }
+        handler.removeCallbacks(worker)
+        running = false
+        for (provider in providers.toList()) {
+            try { locationManager.removeTestProvider(provider) } catch (_: Exception) { }
+        }
         providers.clear()
         super.onDestroy()
     }
