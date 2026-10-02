@@ -73,7 +73,7 @@ class MainActivity : Activity() {
             setPadding(dp(14), dp(14), dp(14), dp(20))
             setBackgroundColor(Color.rgb(16, 23, 35))
         }
-        val scroll = ScrollView(this).apply { fillViewport = true; addView(column) }
+        val scroll = ScrollView(this).apply { isFillViewport = true; addView(column) }
         setContentView(scroll)
         column.addView(label("PinShift", 29f))
         column.addView(label("Choose a location on the map, search an address, or enter coordinates.", 13f))
