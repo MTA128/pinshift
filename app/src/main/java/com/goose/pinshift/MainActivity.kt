@@ -62,6 +62,8 @@ private val Mint = Color(0xFF5FE3BC)
 private val White = Color(0xFFEDF5FF)
 private val Subtle = Color(0xFF9CB0C6)
 
+private enum class PinEdit { DESTINATION, START, WAYPOINT }
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -146,12 +148,21 @@ private fun Studio(activity: MainActivity) {
     val scope = rememberCoroutineScope()
     val router = remember { RoutingClient() }
     var routeRequestId by remember { mutableIntStateOf(0) }
+    var waypointList by remember { mutableStateOf<List<GeoPoint>>(emptyList()) }
+    var mapEdit by remember { mutableStateOf(PinEdit.DESTINATION) }
+    var autoFit by remember { mutableStateOf(true) }
+    var detourSide by remember { mutableStateOf(DetourSide.EITHER) }
+
+    fun invalidateRoute() {
+        routeRequestId++
+        routePreview = null
+        planning = false
+    }
+
     fun select(lat: Double, lon: Double, recenter: Boolean) {
         if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) return
         if (selectedLat != lat || selectedLon != lon) {
-            routeRequestId++
-            routePreview = null
-            planning = false
+            invalidateRoute()
         }
         selectedLat = lat
         selectedLon = lon
@@ -171,6 +182,46 @@ private fun Studio(activity: MainActivity) {
         return GeoPoint(lat, lon)
     }
 
+    fun setStart(lat: Double, lon: Double) {
+        if (!RouteGeometry.valid(lat, lon)) return
+        startLat = lat
+        startLon = lon
+        invalidateRoute()
+        detail = "Route start updated."
+    }
+
+    fun replaceWaypoint(index: Int, lat: Double, lon: Double) {
+        if (!RouteGeometry.valid(lat, lon) || index !in waypointList.indices) return
+        waypointList = waypointList.toMutableList().also { it[index] = GeoPoint(lat, lon) }
+        invalidateRoute()
+        detail = "Waypoint " + (index + 1) + " moved."
+    }
+
+    fun addWaypoint(lat: Double, lon: Double) {
+        if (!RouteGeometry.valid(lat, lon)) return
+        if (waypointList.size >= 5) {
+            detail = "Maximum five stops. Remove a waypoint first."
+            return
+        }
+        waypointList = waypointList + GeoPoint(lat, lon)
+        invalidateRoute()
+        detail = "Waypoint " + waypointList.size + " added. Drag it on the map or reorder below."
+    }
+
+    fun placeSelected(lat: Double, lon: Double) {
+        when {
+            !routeMode || mapEdit == PinEdit.DESTINATION -> select(lat, lon, true)
+            mapEdit == PinEdit.START -> {
+                setStart(lat, lon)
+                mapEdit = PinEdit.DESTINATION
+            }
+            mapEdit == PinEdit.WAYPOINT -> {
+                addWaypoint(lat, lon)
+                mapEdit = PinEdit.DESTINATION
+            }
+        }
+    }
+
     fun prepareRoute() {
         val end = readPoint() ?: return
         val from = GeoPoint(startLat,startLon)
@@ -178,17 +229,21 @@ private fun Studio(activity: MainActivity) {
         val requestedMode = travelMode
         val requestedSpeed = speed
         val requestedMinutes = minutes.toInt()
+        val requestedVia = waypointList.toList()
+        val requestedFit = autoFit
+        val requestedSide = detourSide
         planning = true
         routePreview = null
-        detail = "Finding roads and paths. This may take several seconds."
+        detail = "Measuring real roads and fitting detours. This can take up to a minute."
         scope.launch {
             try {
-                val result = router.generate(from, end, requestedMode, requestedSpeed, requestedMinutes)
+                val result = router.generate(from, end, requestedMode, requestedSpeed,
+                    requestedMinutes, requestedVia, requestedFit, requestedSide)
                 if (routeRequestId != requestId) return@launch
                 routePreview = result
                 detail = if (result.withinTolerance)
-                    "Route ready — duration close to your target."
-                else "Closest route found differs from requested duration. Review time before starting."
+                    "Matched your journey duration within 5% on mapped roads and paths."
+                else "No close mapped route was found. Check the actual time and adjust your stops if needed."
             } catch (e: Exception) {
                 if (routeRequestId == requestId) {
                     detail = e.localizedMessage ?: "Routing service is unavailable. Please retry."
@@ -216,6 +271,12 @@ private fun Studio(activity: MainActivity) {
         }
         if (isRoute && routePreview?.let {
             it.mode != travelMode || it.averageKmh != speed || it.targetMinutes != minutes.toInt() ||
+            it.autoFit != autoFit || it.preferredSide != detourSide ||
+            it.waypoints.size != waypointList.size ||
+            it.waypoints.indices.any { index ->
+                kotlin.math.abs(it.waypoints[index].latitude - waypointList[index].latitude) > 0.000001 ||
+                kotlin.math.abs(it.waypoints[index].longitude - waypointList[index].longitude) > 0.000001
+            } ||
             kotlin.math.abs(it.from.latitude - startLat) > 0.000001 ||
             kotlin.math.abs(it.from.longitude - startLon) > 0.000001
         } == true) { routePreview = null; detail = "Route settings changed. Generate the route again."; return }
@@ -315,15 +376,28 @@ private fun Studio(activity: MainActivity) {
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))) {
-            LocationMap(selectedLat, selectedLon, focus, routePreview?.points ?: emptyList()) { lat, lon ->
-                select(lat, lon, false)
-            }
+            LocationMap(
+                selectedLat, selectedLon, focus,
+                routePreview?.points ?: emptyList(),
+                if (routeMode) GeoPoint(startLat, startLon) else null,
+                if (routeMode) waypointList else emptyList(),
+                onPicked = { lat, lon -> placeSelected(lat, lon) },
+                onStartDragged = { lat, lon -> setStart(lat, lon) },
+                onWaypointDragged = { index, lat, lon -> replaceWaypoint(index, lat, lon) },
+                onDestinationDragged = { lat, lon -> select(lat, lon, false) }
+            )
             Surface(Modifier.align(Alignment.TopStart).padding(12.dp), shape = RoundedCornerShape(12.dp),
                 color = Ink.copy(alpha = 0.93f)) {
                 Row(Modifier.padding(horizontal = 12.dp, vertical = 9.dp), verticalAlignment = Alignment.CenterVertically) {
                     Text("●", color = Mint, fontSize = 12.sp)
                     Spacer(Modifier.width(6.dp))
-                    Text(if (routeMode) "DESTINATION PIN" else "SELECTED POSITION", color = White,
+                    Text(
+                        if (!routeMode) "SELECTED POSITION"
+                        else when (mapEdit) {
+                            PinEdit.START -> "TAP TO SET ROUTE START"
+                            PinEdit.WAYPOINT -> "TAP TO ADD WAYPOINT"
+                            PinEdit.DESTINATION -> "TAP TO SET DESTINATION"
+                        }, color = White,
                         fontWeight = FontWeight.SemiBold, fontSize = 10.sp, letterSpacing = 1.sp)
                 }
             }
@@ -383,7 +457,10 @@ private fun Studio(activity: MainActivity) {
                 Spacer(Modifier.height(6.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     TextButton(onClick = {
-                        readPoint()?.let { select(it.latitude, it.longitude, true); detail = "Pin moved to coordinates" }
+                        readPoint()?.let {
+                            placeSelected(it.latitude, it.longitude)
+                            detail = "Coordinates applied to the selected map-edit mode."
+                        }
                     }) { Text("APPLY COORDINATES", fontSize = 11.sp, fontWeight = FontWeight.Bold) }
                     Spacer(Modifier.weight(1f))
                     TextButton(onClick = {
@@ -396,11 +473,12 @@ private fun Studio(activity: MainActivity) {
         }
         Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            FilterChip(selected = !routeMode, onClick = { routeMode = false },
+            FilterChip(selected = !routeMode, onClick = { routeMode = false; mapEdit = PinEdit.DESTINATION },
                 label = { Text("STATIC LOCATION") })
             FilterChip(selected = routeMode, onClick = {
                 if (!routeMode) { startLat = selectedLat; startLon = selectedLon }
                 routeMode = true
+                mapEdit = PinEdit.DESTINATION
             }, label = { Text("ROUTE SIMULATOR") })
         }
         if (routeMode) {
@@ -417,9 +495,7 @@ private fun Studio(activity: MainActivity) {
                             FilterChip(selected = travelMode == mode, onClick = {
                                 travelMode = mode
                                 speed = mode.suggestedKmh
-                                routeRequestId++
-                                routePreview = null
-                                planning = false
+                                invalidateRoute()
                             }, label = { Text(mode.title, fontSize = 11.sp) })
                         }
                     }
@@ -582,7 +658,7 @@ private fun Studio(activity: MainActivity) {
                         val addressLabel = address.getAddressLine(0)
                             ?: displayPoint(address.latitude, address.longitude)
                         Text(addressLabel, Modifier.fillMaxWidth().clickable {
-                            select(address.latitude, address.longitude, true)
+                            placeSelected(address.latitude, address.longitude)
                             query = addressLabel
                             detail = "Pin updated. Press Move here to apply."
                             resultDialog = emptyList()
