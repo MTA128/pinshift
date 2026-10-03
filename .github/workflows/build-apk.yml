@@ -57,14 +57,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh release view v3.0.0-beta.1 >/dev/null 2>&1; then
-            gh release create v3.0.0-beta.1               "app/build/outputs/apk/debug/app-debug.apk#GooseRoute-beta.apk"               "app/build/outputs/apk/debug/SHA256SUMS#SHA256SUMS"               --title "GooseRoute 3.0 beta 1" --prerelease               --notes-file RELEASE_NOTES.md --target "$GITHUB_SHA"
+          if ! gh release view v3.1.0-beta.2 >/dev/null 2>&1; then
+            gh release create v3.1.0-beta.2               "app/build/outputs/apk/debug/app-debug.apk#GooseRoute-v3.1-beta.2.apk"               "app/build/outputs/apk/debug/SHA256SUMS#SHA256SUMS"               --title "GooseRoute 3.1 beta 2" --prerelease               --notes-file RELEASE_NOTES.md --target "$GITHUB_SHA"
           else
             echo "Beta release already exists. Leaving previously published APK unchanged."
           fi
           # Set a clear filename for public downloads (not just a display label).
-          ASSET_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v3.0.0-beta.1" --jq '.assets[] | select(.name=="app-debug.apk") | .id' || true)"
+          ASSET_ID="$(gh api "repos/$GITHUB_REPOSITORY/releases/tags/v3.1.0-beta.2" --jq '.assets[] | select(.name=="app-debug.apk") | .id' || true)"
           if [ -n "$ASSET_ID" ]; then
-            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" -f name=GooseRoute-beta.apk >/dev/null
-            echo "Public APK renamed to GooseRoute-beta.apk"
+            gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/assets/$ASSET_ID" -f name=GooseRoute-v3.1-beta.2.apk >/dev/null
+            echo "Public APK renamed to GooseRoute-v3.1-beta.2.apk"
           fi

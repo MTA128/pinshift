@@ -1,5 +1,14 @@
 # Changelog
 
+## 3.1.0-beta.2 — Custom route planner
+- Added up to five manual route waypoints that can be moved, reordered or deleted.
+- Start and destination now editable separately from the map and address search.
+- Added a destination-distance fitter with side preference (either, left or right) and optional disable switch.
+- Average speed stays fixed, travel duration remains user controlled in one-minute steps.
+- Preview now reports actual route duration and percentage deviation, including errors when a route cannot be short enough.
+- Added route fitting tests and updated emulator UI coverage.
+
+
 ## 3.0.0-beta.1 — GooseRoute
 - Rebranded from PinShift with goose-on-pin icon and GooseRoute name.
 - Added genuine walk, cycle and drive route preview using public OSRM profiles.

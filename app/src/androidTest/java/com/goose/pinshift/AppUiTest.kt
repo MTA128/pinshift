@@ -20,8 +20,10 @@ class AppUiTest {
     @Test fun enteringRouteTabShowsRealRoadControls() {
         composeRule.onNodeWithText("ROUTE SIMULATOR").performClick()
         composeRule.onNodeWithText("REAL ROAD & PATH ROUTING").assertExists()
-        composeRule.onNodeWithText("GENERATE ROAD/PATH ROUTE").assertExists()
+        composeRule.onNodeWithText("GENERATE FITTED ROAD ROUTE").assertExists()
         composeRule.onNodeWithText("START ROUTE").assertExists()
+        composeRule.onNodeWithText("+ Waypoint").assertExists()
+        composeRule.onNodeWithText("Fit route to required distance").assertExists()
         composeRule.onNodeWithText("Walk").assertExists()
         composeRule.onNodeWithText("Cycle").assertExists()
         composeRule.onNodeWithText("Drive").assertExists()

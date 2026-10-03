@@ -365,7 +365,7 @@ private fun Studio(activity: MainActivity) {
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
                 Text("GOOSEROUTE", fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp, color = White)
-                Text("BY GOOSE  /  V3.0 BETA", color = Subtle, fontSize = 10.sp, letterSpacing = 1.7.sp)
+                Text("BY GOOSE  /  V3.1 BETA", color = Subtle, fontSize = 10.sp, letterSpacing = 1.7.sp)
             }
             Surface(shape = RoundedCornerShape(30.dp), color = if (MockLocationService.running) Color(0xFF173A37) else Panel) {
                 Text(if (MockLocationService.running) "● LIVE" else "● READY",

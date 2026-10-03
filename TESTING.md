@@ -1,5 +1,8 @@
 # GooseRoute test plan
 
+The 3.1 route-fitting regression tests verify required distance calculation, acceptance tolerance, detour direction, manually specified stop ordering, circular journeys and valid geographic boundaries. Android emulator UI tests verify route-editing controls are present.
+
+
 Automated testing is split into two workflows.
 
 **Build GooseRoute Android Beta:** compiles the debug APK and runs JUnit timing tests before publishing its output.
