@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 108 108" role="img" aria-label="White goose on a mint location marker">
+  <rect width="108" height="108" rx="22" fill="#0b1728"/>
+  <path d="M54 7C29 7 15 23 15 45C15 66 30 79 54 103C78 79 93 66 93 45C93 23 79 7 54 7Z" fill="#59e3c4"/>
+  <path d="M54 17C36 17 25 29 25 45C25 62 40 75 54 87C68 75 83 62 83 45C83 29 72 17 54 17Z" fill="#183b4c"/>
+  <path d="M29 61C33 55 42 52 49 53C54 54 57 55 61 52C63 49 62 44 58 40C51 34 50 29 53 23C56 17 65 17 70 22C73 25 74 31 71 36C69 40 68 43 68 49C68 59 60 65 50 67C40 69 33 66 29 61Z" fill="#f5fbff"/>
+  <path d="M36 57C41 53 48 54 55 56C50 57 48 62 44 63C39 63 36 61 36 57Z" fill="#cfebf3"/>
+  <path d="M70 27L84 31L70 34Z" fill="#ffb34e"/>
+  <circle cx="64" cy="25" r="1.8" fill="#0c1a2d"/>
+  <path d="M31 59L23 53L29 66L37 64Z" fill="#f5fbff"/>
+</svg>

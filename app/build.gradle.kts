@@ -11,8 +11,8 @@ android {
         applicationId = "com.goose.pinshift"
         minSdk = 33
         targetSdk = 34
-        versionCode = 2
-        versionName = "2.0"
+        versionCode = 3
+        versionName = "3.0.0-beta.1"
     }
     buildFeatures {
         compose = true
@@ -31,4 +31,5 @@ dependencies {
     implementation("androidx.activity:activity-compose:1.9.3")
     implementation("org.osmdroid:osmdroid-android:6.1.20")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

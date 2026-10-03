@@ -27,6 +27,7 @@ class MockLocationService : Service() {
         const val EXTRA_FROM_LAT = "fromLatitude"
         const val EXTRA_FROM_LON = "fromLongitude"
         const val EXTRA_SPEED = "kmh"
+        const val EXTRA_ROUTE_POINTS = "routePoints"
         const val EXTRA_MESSAGE = "message"
         private const val CHANNEL_ID = "pinshift_location_v2"
         private const val NOTIFICATION_ID = 62
@@ -48,7 +49,8 @@ class MockLocationService : Service() {
         val fromLat: Double, val fromLon: Double,
         val toLat: Double, val toLon: Double,
         val metres: Double, val speedMetresPerSecond: Double,
-        val startedAt: Long
+        val startedAt: Long,
+        val points: List<Pair<Double, Double>>
     )
 
     private val worker = object : Runnable {
@@ -104,9 +106,17 @@ class MockLocationService : Service() {
                 val a = intent.getDoubleExtra(EXTRA_FROM_LAT, Double.NaN)
                 val b = intent.getDoubleExtra(EXTRA_FROM_LON, Double.NaN)
                 val kmh = intent.getFloatExtra(EXTRA_SPEED, 25f).coerceIn(1f, 110f)
-                if (!valid(a, b)) throw IllegalArgumentException("Invalid route starting point")
-                Route(a, b, targetLat, targetLon, metres(a, b, targetLat, targetLon),
-                    kmh.toDouble() / 3.6, SystemClock.elapsedRealtime())
+                val values = intent.getDoubleArrayExtra(EXTRA_ROUTE_POINTS)
+                    ?: throw IllegalArgumentException("Generate a routed path first")
+                if (!valid(a,b) || values.size < 4 || values.size % 2 != 0 || values.size > 1600)
+                    throw IllegalArgumentException("Invalid routed path")
+                val road = values.toList().chunked(2).map { Pair(it[0],it[1]) }
+                if (road.any { !valid(it.first,it.second) })
+                    throw IllegalArgumentException("Invalid route points")
+                val pathMetres = pathDistance(road)
+                if (pathMetres < 5.0) throw IllegalArgumentException("Route is too short")
+                Route(a,b,targetLat,targetLon,pathMetres,
+                    kmh.toDouble()/3.6,SystemClock.elapsedRealtime(),road)
             } else null
 
             route = newRoute
@@ -130,7 +140,7 @@ class MockLocationService : Service() {
                 publishPosition()
                 notifications.notify(NOTIFICATION_ID, notification())
             }
-            if (newRoute != null) report("Straight-line journey started")
+            if (newRoute != null) report("Road-network journey started")
             else report(String.format(Locale.US, "Position fixed at %.6f, %.6f", latitude, longitude))
         } catch (error: Exception) {
             report("Could not start location engine: " + (error.localizedMessage ?: "unknown error"))
@@ -184,17 +194,22 @@ class MockLocationService : Service() {
     }
 
     private fun progress(route: Route) =
-        if (route.metres < 0.5) 1.0
-        else (((SystemClock.elapsedRealtime() - route.startedAt).coerceAtLeast(0L) / 1000.0)
-            * route.speedMetresPerSecond / route.metres).coerceIn(0.0, 1.0)
+        if (route.metres < 0.5) 1.0 else {
+            val elapsed = (SystemClock.elapsedRealtime()-route.startedAt).coerceAtLeast(0L)/1000.0
+            val total = route.metres/route.speedMetresPerSecond
+            val x = (elapsed/total).coerceIn(0.0,1.0)
+            // A smooth varying speed profile with the same average over the whole route.
+            RouteTiming.distanceFraction(x)
+        }
 
     private fun advanceRoute() {
         val current = route ?: return
         val p = progress(current)
-        val coordinates = greatCircle(current.fromLat, current.fromLon,
-            current.toLat, current.toLon, p)
+        val coordinates = interpolateRoad(current.points,p)
         latitude = coordinates.first
         longitude = coordinates.second
+        speedMs = (current.speedMetresPerSecond *
+            (1.0 + 0.18*sin(2.0*Math.PI*p))).toFloat().coerceAtLeast(0f)
         if (p >= 1.0) {
             route = null
             speedMs = 0f
@@ -219,18 +234,25 @@ class MockLocationService : Service() {
         return ((Math.toDegrees(atan2(y, x)) + 360.0) % 360.0).toFloat()
     }
 
-    private fun greatCircle(a: Double, b: Double, c: Double, d: Double, fraction: Double): Pair<Double, Double> {
-        val radians = metres(a, b, c, d) / 6371000.0
-        if (radians < 1e-10 || fraction >= 1.0) return Pair(c, d)
-        val m = sin((1.0 - fraction) * radians) / sin(radians)
-        val n = sin(fraction * radians) / sin(radians)
-        val lat1 = Math.toRadians(a); val lon1 = Math.toRadians(b)
-        val lat2 = Math.toRadians(c); val lon2 = Math.toRadians(d)
-        val x = m * cos(lat1) * cos(lon1) + n * cos(lat2) * cos(lon2)
-        val y = m * cos(lat1) * sin(lon1) + n * cos(lat2) * sin(lon2)
-        val z = m * sin(lat1) + n * sin(lat2)
-        return Pair(Math.toDegrees(atan2(z, sqrt(x * x + y * y))),
-            Math.toDegrees(atan2(y, x)))
+    private fun pathDistance(points: List<Pair<Double,Double>>): Double {
+        return points.zipWithNext().sumOf { (a,b) -> metres(a.first,a.second,b.first,b.second) }
+    }
+    private fun interpolateRoad(points: List<Pair<Double,Double>>, fraction: Double): Pair<Double,Double> {
+        if (fraction <= 0.0) return points.first()
+        if (fraction >= 1.0) return points.last()
+        val distance = pathDistance(points)
+        var remaining = distance * fraction
+        for (i in 0 until points.lastIndex) {
+            val a=points[i]; val b=points[i+1]
+            val segment=metres(a.first,a.second,b.first,b.second)
+            if (remaining <= segment && segment > 0.0) {
+                val blend=(remaining/segment).coerceIn(0.0,1.0)
+                bearing=direction(a.first,a.second,b.first,b.second)
+                return Pair(a.first+(b.first-a.first)*blend,a.second+(b.second-a.second)*blend)
+            }
+            remaining -= segment
+        }
+        return points.last()
     }
 
     private fun notification(): Notification {

@@ -1,32 +1,71 @@
-# PinShift 2.0 — Location Studio
+# GooseRoute 🪿
+### Map-based GPS simulation and road-route testing for Android
 
-Android 13+ location testing app for your own phone. Built with Kotlin, Material 3 and OpenStreetMap.
+**GooseRoute 3.0 beta** is an independent, open-to-try Android app by **Goose / MTA128**. Choose a point, search for an address, or preview a snapped-to-road walking, cycling or driving route before simulating location on your own device.
+
+[![Build GooseRoute APK](https://github.com/MTA128/pinshift/actions/workflows/build-apk.yml/badge.svg)](https://github.com/MTA128/pinshift/actions/workflows/build-apk.yml)
+[![Download latest beta](https://img.shields.io/badge/Get_GooseRoute-beta_APK-5DE3BC?style=flat-square)](https://github.com/MTA128/pinshift/releases/latest)
+
+<p align="center">
+  <img src="docs/logo.svg" alt="GooseRoute goose on a location pin" width="146" /><br/>
+  <strong>Pick a place. Plan a route. Test the journey.</strong>
+</p>
+
+## Download and install
+
+**Start here: [Latest GooseRoute downloads](https://github.com/MTA128/pinshift/releases/latest)**. If there is no release yet, download the latest successful [GitHub Actions artifact](https://github.com/MTA128/pinshift/actions/workflows/build-apk.yml). A GitHub sign-in may be required for Actions artifacts.
+
+1. On your Android 13+ phone, download **GooseRoute-beta.apk** from the release page, or download and extract the build ZIP to find `app-debug.apk`.
+2. Open the APK in Downloads or My Files and choose **Install**. Only grant install permission to a source you trust.
+3. Go to **Settings → Developer options → Select mock location app → GooseRoute**. To enable Developer options on Samsung, tap the Build number seven times under **About phone → Software information**.
+4. Enable Location and grant GooseRoute precise location permission.
+5. Pick a location or tap **ROUTE SIMULATOR**, select **Walk / Cycle / Drive**, an average speed and target duration, then **GENERATE ROAD/PATH ROUTE**.
+6. Review the snapped route on the map, including its **actual** predicted duration, then start it. Use **STOP** to restore normal location providers.
+
+> Important: each debug-signed beta APK may have a different signing key. Android can reject installing a newer build over an older one; you may need to uninstall first (which also erases app-local favourites). A stable release-signing key is required before promising seamless updates.
 
 ## Features
 
-- Polished native dark interface with live map pin and fine coordinate inputs.
-- Search for street addresses, postcodes and place names with Android Geocoder.
-- Exact coordinate entry, coordinate clipboard copying and remembered last position.
-- Locally saved favourite spots, recent selections and one-tap recall.
-- Static mock GPS and configurable-speed **straight-line** movement between two points.
-- Start/stop controls and a persistent foreground notification.
-- Help for choosing PinShift as the system mock-location app.
-- Android's documented test-provider API; no root access required.
+| Feature | Description |
+| --- | --- |
+| Interactive map | Tap or drag the goose's location pin; detailed coordinate input |
+| Address lookup | Search addresses, places and UK postcodes |
+| Route modes | Walking, cycling and driving via network routing profiles |
+| Route duration | Choose 5–240 minutes and average speed; planner looks for paths with matching distance |
+| Real mapped geometry | OSRM snaps selected waypoints to routable roads and paths; preview displayed before starting |
+| Speed changes | Simulated speed fluctuates smoothly while retaining the trip-average speed |
+| Saved and recent places | Device-local favourites and history |
+| Privacy-minded | No ad SDKs, analytics SDKs or user accounts |
+| Sharing | In-app share link, plus a public source repository |
 
-**Limitations:** Android marks mock locations. Other apps may detect, ignore or supplement them using other signals. PinShift does not try to hide mock status or defeat integrity checks. A straight-line simulation is not a real street route. Device and third-party app compatibility require testing.
+### How duration and speed are handled
 
-## Installation
+When you request **40 minutes at 5 km/h**, the target route length is **3.33 km**. GooseRoute varies route waypoints and evaluates a small set of genuine walking, cycling or driving routes to find one close to that distance. **It does not secretly change your average speed**. When a close match isn't available, it displays the actual distance and duration instead of claiming an exact fit.
 
-1. Open the latest **successful** workflow in [GitHub Actions](https://github.com/MTA128/pinshift/actions).
-2. Download the **PinShift-Android-APK** artifact ZIP and extract its `app-debug.apk`.
-3. Install on your Galaxy S21; you might need to allow installation from your file manager.
-4. Enable Developer options, then choose **PinShift** under **Select mock location app**.
-5. Turn on Location. Launch PinShift, allow precise location permission, and try **Move here**.
+The candidate search is limited and routes may not match the requested duration. Pedestrian routes follow available mapped paths, not a guarantee of safe access in the real world. Simulation is for testing, not real navigation.
 
-The app doesn't collect user analytics. Map tiles are downloaded from OpenStreetMap and address lookup is performed by the Android Geocoder service. If the current build's debug signing key differs from an earlier version, Android may require uninstalling the old APK first. Uninstalling removes your app-local saved places.
+## Limitations and responsible use
 
-## Build
+- **No mock-location detection bypass**: Android marks generated locations as mock. Snapchat, WhatsApp and other apps may detect or ignore them or use other signals.
+- **Route service**: The beta uses the community-operated [routing.openstreetmap.de](https://routing.openstreetmap.de/about.html) demo endpoints for walking, cycling and driving. It's rate-limited (≤1 request/sec) and **not an unlimited production service**. For a wider public launch, provide your own hosted routing backend or licensed routing provider.
+- **Map tiles**: © [OpenStreetMap contributors](https://www.openstreetmap.org/copyright). The map needs internet access. Community tile service usage rules apply.
+- **On-device testing**: GitHub CI verifies compilation, not live GPS behaviour on every Android device.
+- Google Play Services fused locations and device integrity checks are not promised to be overridden.
+- The repository is public, but no open-source licence has been selected yet. Redistribution rights are not automatically granted.
 
-The project uses Java 17, AGP 8.7.3, Kotlin 2.0.21, Compose Material 3, osmdroid and Android API 35. GitHub Actions compiles and publishes a debug APK on each push.
+## Privacy
 
-The repository's current code is experimental, and successful compilation does not constitute testing on a Samsung device.
+Favourites and recent destinations are saved in Android app-local storage. Map tiles and route requests reach third-party infrastructure and include map/route coordinates. Android's address lookup may contact a backend chosen by the device. There is no built-in account registration or analytics SDK. See [Privacy](PRIVACY.md).
+
+## Development and feedback
+
+[Report bugs](https://github.com/MTA128/pinshift/issues/new/choose) • [See builds](https://github.com/MTA128/pinshift/actions) • [Release notes](CHANGELOG.md) • [How to contribute](CONTRIBUTING.md)
+
+This is a **public beta**. Feedback and device screenshots are welcome, but do not include precise home coordinates or other personal location data in public bug reports.
+
+### Project identity
+
+- **App:** GooseRoute
+- **Creator:** Goose / [@MTA128](https://github.com/MTA128)
+- **Android package:** `com.goose.pinshift` (kept for upgrade compatibility)
+- **Repository:** `MTA128/pinshift` (legacy project URL)

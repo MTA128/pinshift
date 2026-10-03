@@ -1,4 +1,4 @@
-name: Build PinShift APK
+name: Build GooseRoute Android Beta
 on:
   workflow_dispatch:
   push:
@@ -7,7 +7,7 @@ jobs:
   build:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      contents: write
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -16,9 +16,8 @@ jobs:
         with:
           distribution: temurin
           java-version: '17'
-      - name: Install Android API 35 with preinstalled SDK
+      - name: Android SDK API 35
         run: |
-          echo "ANDROID_HOME=$ANDROID_HOME"
           SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager | head -n 1)"
           test -n "$SDKMANAGER"
           "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
@@ -26,11 +25,29 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: '8.9'
+      - name: Run timing unit tests
+        run: gradle :app:testDebugUnitTest --no-daemon --stacktrace
       - name: Compile APK
         run: gradle :app:assembleDebug --no-daemon --stacktrace
-      - name: Publish APK
+      - name: Generate SHA256 checksum
+        run: |
+          cd app/build/outputs/apk/debug
+          sha256sum app-debug.apk | tee SHA256SUMS
+      - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: PinShift-Android-APK
-          path: app/build/outputs/apk/debug/app-debug.apk
+          name: GooseRoute-Android-Beta
+          path: |
+            app/build/outputs/apk/debug/app-debug.apk
+            app/build/outputs/apk/debug/SHA256SUMS
           if-no-files-found: error
+      - name: Publish the beta APK to GitHub Releases (once)
+        if: github.ref == 'refs/heads/main'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view v3.0.0-beta.1 >/dev/null 2>&1; then
+            gh release create v3.0.0-beta.1               "app/build/outputs/apk/debug/app-debug.apk#GooseRoute-beta.apk"               "app/build/outputs/apk/debug/SHA256SUMS#SHA256SUMS"               --title "GooseRoute 3.0 beta 1" --prerelease               --notes-file RELEASE_NOTES.md --target "$GITHUB_SHA"
+          else
+            echo "Beta release already exists. Leaving previously published APK unchanged."
+          fi

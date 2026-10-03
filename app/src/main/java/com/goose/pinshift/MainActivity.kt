@@ -49,6 +49,9 @@ import org.osmdroid.util.GeoPoint
 import org.osmdroid.views.MapView
 import org.osmdroid.views.overlay.MapEventsOverlay
 import org.osmdroid.views.overlay.Marker
+import org.osmdroid.views.overlay.Polyline
+import androidx.compose.ui.res.painterResource
+import kotlinx.coroutines.launch
 import java.util.Locale
 import kotlin.math.*
 
@@ -84,15 +87,18 @@ class MainActivity : ComponentActivity() {
     fun locationGranted(): Boolean =
         checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
 
-    fun startEngine(point: GeoPoint, routeFrom: GeoPoint?, kmh: Float) {
+    fun startEngine(point: GeoPoint, planned: PlannedRoute?) {
         val intent = Intent(this, MockLocationService::class.java).apply {
-            action = if (routeFrom == null) MockLocationService.ACTION_START else MockLocationService.ACTION_ROUTE
+            action = if (planned == null) MockLocationService.ACTION_START else MockLocationService.ACTION_ROUTE
             putExtra(MockLocationService.EXTRA_LAT, point.latitude)
             putExtra(MockLocationService.EXTRA_LON, point.longitude)
-            if (routeFrom != null) {
-                putExtra(MockLocationService.EXTRA_FROM_LAT, routeFrom.latitude)
-                putExtra(MockLocationService.EXTRA_FROM_LON, routeFrom.longitude)
-                putExtra(MockLocationService.EXTRA_SPEED, kmh)
+            if (planned != null) {
+                putExtra(MockLocationService.EXTRA_FROM_LAT, planned.from.latitude)
+                putExtra(MockLocationService.EXTRA_FROM_LON, planned.from.longitude)
+                putExtra(MockLocationService.EXTRA_SPEED, planned.averageKmh)
+                putExtra(MockLocationService.EXTRA_ROUTE_POINTS, planned.points.flatMap {
+                    listOf(it.latitude,it.longitude)
+                }.toDoubleArray())
             }
         }
         startForegroundService(intent)
@@ -131,11 +137,17 @@ private fun Studio(activity: MainActivity) {
     var routeMode by remember { mutableStateOf(false) }
     var startLat by remember { mutableDoubleStateOf(original.first) }
     var startLon by remember { mutableDoubleStateOf(original.second) }
-    var speed by remember { mutableFloatStateOf(25f) }
+    var speed by remember { mutableFloatStateOf(5f) }
     var busy by remember { mutableStateOf(false) }
-
+    var travelMode by remember { mutableStateOf(TravelMode.WALK) }
+    var minutes by remember { mutableFloatStateOf(40f) }
+    var routePreview by remember { mutableStateOf<PlannedRoute?>(null) }
+    var planning by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    val router = remember { RoutingClient() }
     fun select(lat: Double, lon: Double, recenter: Boolean) {
         if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) return
+        if (selectedLat != lat || selectedLon != lon) routePreview = null
         selectedLat = lat
         selectedLon = lon
         latitudeText = String.format(Locale.US, "%.6f", lat)
@@ -154,6 +166,26 @@ private fun Studio(activity: MainActivity) {
         return GeoPoint(lat, lon)
     }
 
+    fun prepareRoute() {
+        val end = readPoint() ?: return
+        val from = GeoPoint(startLat,startLon)
+        planning = true
+        routePreview = null
+        detail = "Finding roads and paths. This may take several seconds."
+        scope.launch {
+            try {
+                val result = router.generate(from,end,travelMode,speed,minutes.toInt())
+                routePreview = result
+                detail = if (result.withinTolerance)
+                    "Route ready — duration close to your target."
+                else "Closest route found differs from requested duration. Review time before starting."
+            } catch (e: Exception) {
+                detail = e.localizedMessage ?: "Routing service is unavailable. Please retry."
+                routePreview = null
+            } finally { planning = false }
+        }
+    }
+
     val locationLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestMultiplePermissions()
     ) {
@@ -164,6 +196,14 @@ private fun Studio(activity: MainActivity) {
     ) { }
     fun start(isRoute: Boolean) {
         val point = readPoint() ?: return
+        if (isRoute && routePreview == null) {
+            detail = "Generate and review a real road/path route before starting."
+            return
+        }
+        if (isRoute && routePreview?.to?.let {
+            kotlin.math.abs(it.latitude-point.latitude) > 0.000001 ||
+            kotlin.math.abs(it.longitude-point.longitude) > 0.000001
+        } == true) { routePreview = null; detail = "Destination changed. Generate route again."; return }
         select(point.latitude, point.longitude, true)
         if (!activity.canMock()) {
             detail = "Select PinShift as mock location app in Android Developer options"
@@ -183,14 +223,10 @@ private fun Studio(activity: MainActivity) {
             return
         }
         try {
-            activity.startEngine(
-                point,
-                if (isRoute) GeoPoint(startLat, startLon) else null,
-                speed
-            )
+            activity.startEngine(point,if (isRoute) routePreview else null)
             recent = store.addRecent(point.latitude, point.longitude)
             status = "STARTING"
-            detail = if (isRoute) "Starting straight-line simulation…" else "Applying selected coordinates…"
+            detail = if (isRoute) "Following street-network route at selected average speed…" else "Applying selected coordinates…"
             if (activity.checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
                 notificationLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
             }
@@ -243,12 +279,13 @@ private fun Studio(activity: MainActivity) {
             Box(Modifier.size(52.dp).clip(RoundedCornerShape(17.dp))
                 .background(Brush.linearGradient(listOf(Mint, Color(0xFF69A8FF)))),
                 contentAlignment = Alignment.Center) {
-                Text("⌖", color = Ink, fontSize = 37.sp, fontWeight = FontWeight.Bold)
+                Image(painterResource(com.goose.pinshift.R.drawable.ic_goose_route),
+                    contentDescription = "GooseRoute goose icon", modifier = Modifier.size(52.dp))
             }
             Spacer(Modifier.width(12.dp))
             Column(Modifier.weight(1f)) {
-                Text("PINSHIFT", fontSize = 27.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp, color = White)
-                Text("LOCATION STUDIO  /  V2.0", color = Subtle, fontSize = 10.sp, letterSpacing = 1.7.sp)
+                Text("GOOSEROUTE", fontSize = 24.sp, fontWeight = FontWeight.Black, letterSpacing = 1.4.sp, color = White)
+                Text("BY GOOSE  /  V3.0 BETA", color = Subtle, fontSize = 10.sp, letterSpacing = 1.7.sp)
             }
             Surface(shape = RoundedCornerShape(30.dp), color = if (MockLocationService.running) Color(0xFF173A37) else Panel) {
                 Text(if (MockLocationService.running) "● LIVE" else "● READY",
@@ -259,7 +296,7 @@ private fun Studio(activity: MainActivity) {
         }
         Spacer(Modifier.height(18.dp))
         Box(Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp))) {
-            LocationMap(selectedLat, selectedLon, focus) { lat, lon ->
+            LocationMap(selectedLat, selectedLon, focus, routePreview?.points ?: emptyList()) { lat, lon ->
                 select(lat, lon, false)
             }
             Surface(Modifier.align(Alignment.TopStart).padding(12.dp), shape = RoundedCornerShape(12.dp),
@@ -345,29 +382,75 @@ private fun Studio(activity: MainActivity) {
             FilterChip(selected = routeMode, onClick = {
                 if (!routeMode) { startLat = selectedLat; startLon = selectedLon }
                 routeMode = true
-            }, label = { Text("MOVEMENT SIMULATOR") })
+            }, label = { Text("ROUTE SIMULATOR") })
         }
         if (routeMode) {
             Spacer(Modifier.height(6.dp))
             Surface(shape = RoundedCornerShape(18.dp), color = Panel) {
                 Column(Modifier.fillMaxWidth().padding(15.dp)) {
-                    Text("STRAIGHT-LINE SIMULATION", fontSize = 12.sp,
+                    Text("REAL ROAD & PATH ROUTING", fontSize = 12.sp,
                         color = White, fontWeight = FontWeight.Bold, letterSpacing = 0.7.sp)
-                    Text("Start: " + displayPoint(startLat, startLon), color = Subtle, fontSize = 11.sp)
-                    Text("End: " + displayPoint(selectedLat, selectedLon), color = Subtle, fontSize = 11.sp)
-                    Text("Distance: " + String.format(Locale.US, "%.2f km", distance(startLat, startLon, selectedLat, selectedLon) / 1000.0),
-                        color = Subtle, fontSize = 11.sp)
-                    TextButton(onClick = { startLat = selectedLat; startLon = selectedLon; detail = "Route start set. Select a destination on the map." }) {
-                        Text("SET CURRENT PIN AS START", fontSize = 11.sp)
+                    Text("Tap the map to set the destination. Preview the route before starting.",
+                        color = Subtle, fontSize = 12.sp, lineHeight = 17.sp)
+                    Spacer(Modifier.height(10.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        TravelMode.entries.forEach { mode ->
+                            FilterChip(selected = travelMode == mode, onClick = {
+                                travelMode = mode
+                                speed = mode.suggestedKmh
+                                routePreview = null
+                            }, label = { Text(mode.title, fontSize = 11.sp) })
+                        }
                     }
+                    Text("Start: " + displayPoint(startLat,startLon), color = Subtle, fontSize = 11.sp)
+                    Text("Destination: " + displayPoint(selectedLat,selectedLon), color = Subtle, fontSize = 11.sp)
+                    TextButton(onClick = {
+                        startLat = selectedLat; startLon = selectedLon; routePreview = null
+                        detail = "New route start set. Choose an end point on the map."
+                    }) { Text("USE PIN AS ROUTE START", fontSize = 11.sp) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("SPEED", color = Subtle, fontWeight = FontWeight.Bold, fontSize = 11.sp,
-                            modifier = Modifier.weight(1f))
-                        Text(String.format(Locale.US, "%.0f km/h", speed), color = Mint, fontWeight = FontWeight.Bold)
+                        Text("AVERAGE SPEED", color = Subtle, fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp, modifier = Modifier.weight(1f))
+                        Text(String.format(Locale.UK, "%.0f km/h",speed), color = Mint, fontWeight = FontWeight.Bold)
                     }
-                    Slider(value = speed, onValueChange = { speed = it },
+                    Slider(value = speed, onValueChange = { speed = it; routePreview = null },
                         valueRange = 1f..110f)
-                    Text("This draws a direct path, not a street navigation route.", color = Subtle, fontSize = 11.sp)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("TARGET DURATION", color = Subtle, fontWeight = FontWeight.Bold,
+                            fontSize = 11.sp, modifier = Modifier.weight(1f))
+                        Text(minutes.toInt().toString() + " minutes", color = Mint, fontWeight = FontWeight.Bold)
+                    }
+                    Slider(value = minutes, onValueChange = { minutes = (it / 5f).toInt() * 5f; routePreview = null },
+                        valueRange = 5f..240f)
+                    Text("Target distance: " + String.format(Locale.UK,"%.2f km",
+                        speed * minutes / 60f) + "  (average speed × time)",
+                        color = Subtle, fontSize = 11.sp)
+                    Spacer(Modifier.height(8.dp))
+                    Button(onClick = { prepareRoute() }, enabled = !planning,
+                        modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
+                        Text(if (planning) "PLANNING..." else "GENERATE ROAD/PATH ROUTE")
+                    }
+                    routePreview?.let { plan ->
+                        Spacer(Modifier.height(10.dp))
+                        Text("ROUTE PREVIEW", fontWeight = FontWeight.Bold, fontSize = 12.sp,
+                            color = Mint)
+                        Text(plan.mode.title + "  •  " +
+                            String.format(Locale.UK,"%.2f km",plan.distanceMetres / 1000.0) +
+                            "  •  " + String.format(Locale.UK,"%.1f min",plan.actualMinutes),
+                            color = White, fontWeight = FontWeight.SemiBold)
+                        Text(if (plan.withinTolerance)
+                            "Within 10% of your duration target."
+                            else "Approximate: requested " + plan.targetMinutes +
+                                " min, actual " + String.format(Locale.UK,"%.1f min",plan.actualMinutes) +
+                                " at your chosen average speed. Your speed has NOT been changed.",
+                            color = if (plan.withinTolerance) Mint else Color(0xFFFFD080),
+                            fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.height(4.dp))
+                    Text("Snaps to walking/cycling/driving routes when service is available. " +
+                        "The preview is checked before playback. Instantaneous speed varies " +
+                        "while keeping your selected trip-average speed.",
+                        color = Subtle, fontSize = 11.sp, lineHeight = 16.sp)
                 }
             }
         }
@@ -440,7 +523,15 @@ private fun Studio(activity: MainActivity) {
         TextButton(onClick = { activity.developerSettings() }) {
             Text("OPEN ANDROID DEVELOPER OPTIONS   ↗", fontWeight = FontWeight.Bold, fontSize = 11.sp)
         }
-        Text("PinShift uses Android's mock location APIs. Android tags these locations as simulated; other apps can detect, reject or override them. No root or stealth modifications.",
+        TextButton(onClick = {
+            val share = Intent(Intent.ACTION_SEND).apply {
+                type = "text/plain"
+                putExtra(Intent.EXTRA_TEXT,
+                    "Try GooseRoute – GPS route testing with maps, walk/cycle/drive routes and duration controls: https://github.com/MTA128/pinshift")
+            }
+            activity.startActivity(Intent.createChooser(share,"Share GooseRoute"))
+        }) { Text("SHARE GOOSEROUTE ↗", fontWeight = FontWeight.Bold, fontSize = 11.sp) }
+        Text("GooseRoute uses Android's mock location APIs. Android tags these locations as simulated; other apps can detect, reject or override them. Road routes require internet and are limited by our demo provider.",
             color = Subtle, fontSize = 11.sp, lineHeight = 16.sp)
         Spacer(Modifier.height(26.dp))
     }
@@ -499,7 +590,8 @@ private fun distance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Do
 }
 
 @Composable
-private fun LocationMap(lat: Double, lon: Double, focusRequest: Int, onPicked: (Double, Double) -> Unit) {
+private fun LocationMap(lat: Double, lon: Double, focusRequest: Int,
+                        routePoints: List<GeoPoint>, onPicked: (Double, Double) -> Unit) {
     val context = LocalContext.current
     val currentPick by rememberUpdatedState(onPicked)
     val lastFocus = remember { intArrayOf(-1) }
@@ -519,6 +611,10 @@ private fun LocationMap(lat: Double, lon: Double, focusRequest: Int, onPicked: (
                 }
                 override fun longPressHelper(point: GeoPoint): Boolean = false
             }))
+            overlays.add(Polyline(this).apply {
+                outlinePaint.color = AndroidColor.rgb(95,227,188)
+                outlinePaint.strokeWidth = 10f
+            })
             val pin = Marker(this).apply {
                 position = GeoPoint(lat, lon)
                 isDraggable = true
@@ -549,6 +645,8 @@ private fun LocationMap(lat: Double, lon: Double, focusRequest: Int, onPicked: (
     AndroidView(factory = { map }, update = {
         (it.overlays.firstOrNull { overlay -> overlay is Marker } as? Marker)
             ?.position = GeoPoint(lat, lon)
+        (it.overlays.firstOrNull { overlay -> overlay is Polyline } as? Polyline)
+            ?.setPoints(routePoints)
         if (lastFocus[0] != focusRequest) {
             it.controller.setCenter(GeoPoint(lat, lon))
             lastFocus[0] = focusRequest

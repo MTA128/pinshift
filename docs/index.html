@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="GooseRoute by Goose: choose a GPS test location, preview walking, cycling and driving routes, and simulate movement on Android.">
+<meta property="og:title" content="GooseRoute — location testing, with personality">
+<meta property="og:description" content="Map picker • snapped street routes • trip-average speed • target duration • Android beta by Goose">
+<meta property="og:image" content="https://raw.githubusercontent.com/MTA128/pinshift/main/docs/logo.svg">
+<title>GooseRoute — Android GPS Route Studio</title>
+<style>
+:root{color-scheme:dark;--bg:#0a1423;--panel:#13243a;--mint:#59e3c4;--text:#edf6ff;--muted:#9bb0c7;}
+*{box-sizing:border-box}body{margin:0;background:radial-gradient(circle at 75% 2%,#204858 0%,#0a1423 44%);font-family:system-ui,-apple-system,"Segoe UI",sans-serif;color:var(--text)}
+.container{max-width:1100px;margin:auto;padding:24px}.nav{display:flex;align-items:center;justify-content:space-between;gap:12px}.brand{display:flex;align-items:center;gap:12px;font-weight:900;letter-spacing:1px;font-size:20px}.brand img{width:46px;height:46px}.nav a{color:#b5cee5;text-decoration:none;font-size:14px}
+.hero{padding:100px 0 85px;display:grid;grid-template-columns:1.1fr .9fr;gap:50px;align-items:center}h1{font-size:clamp(42px,7vw,76px);letter-spacing:-.06em;line-height:1.02;margin:18px 0}h1 span{color:var(--mint)}p{color:var(--muted);font-size:18px;line-height:1.65}.pill{display:inline-block;border:1px solid #356575;border-radius:30px;padding:9px 14px;color:var(--mint);font-size:12px;letter-spacing:1.5px;font-weight:700}
+.cta{display:inline-flex;align-items:center;text-decoration:none;border-radius:14px;padding:17px 24px;font-weight:800;margin:12px 8px 8px 0;background:var(--mint);color:var(--bg)}.secondary{background:var(--panel);color:var(--text);border:1px solid #38506a}
+.phone{margin:auto;width:min(320px,100%);border:8px solid #304d64;border-radius:40px;background:linear-gradient(160deg,#152a41,#0b1728);padding:25px 18px 32px;box-shadow:0 40px 80px #0007;transform:rotate(2deg)}.screenicon{width:94px;display:block;margin:18px auto}.screenstatus{font-size:11px;color:var(--mint);letter-spacing:2px;font-weight:800}.screenmap{position:relative;min-height:250px;margin:18px 0;border-radius:22px;overflow:hidden;background:linear-gradient(32deg,transparent 48%,#385767 49%,#385767 52%,transparent 53%),linear-gradient(128deg,transparent 37%,#314455 38%,#314455 42%,transparent 43%),repeating-linear-gradient(24deg,#1a3441 0 42px,#204251 44px 47px,#183347 49px 80px)}.path{position:absolute;inset:24px 36px 18px 34px;border:5px dashed #59e3c4;border-radius:55% 30% 49% 55%;transform:rotate(-20deg)}.screenbutton{background:var(--mint);color:#082135;padding:13px;border-radius:13px;text-align:center;font-weight:900}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}.card{border:1px solid #294054;background:#142338a6;border-radius:20px;padding:24px}.card h3{margin:0 0 8px}.card p{font-size:15px;margin:0}
+h2{font-size:32px;margin:40px 0 20px}ol{color:var(--muted);font-size:17px;line-height:2}.notice{background:#182a3d;border:1px solid #365264;border-radius:18px;padding:20px;font-size:14px;color:var(--muted);line-height:1.7;margin-top:30px}footer{color:var(--muted);padding:45px 0;border-top:1px solid #2b4054;margin-top:60px;font-size:13px}footer a{color:var(--mint)}
+@media(max-width:790px){.hero{grid-template-columns:1fr;padding:65px 0}.phone{transform:none}.grid{grid-template-columns:1fr}.nav a{font-size:12px}}
+</style></head>
+<body><div class="container">
+<nav class="nav"><div class="brand"><img src="logo.svg" alt="GooseRoute goose icon">GOOSEROUTE</div><a href="https://github.com/MTA128/pinshift">Source on GitHub ↗</a></nav>
+<section class="hero">
+<div><span class="pill">GOOSE / ANDROID PUBLIC BETA</span><h1>Take the <span>scenic route.</span></h1><p>Pick a point. Plan a walk, cycle or drive using real mapped streets. Set your average speed and how long you'd like the route to last, then test the movement on your own Android device.</p>
+<a class="cta" href="https://github.com/MTA128/pinshift/releases/latest">Download beta APK ↗</a><a class="cta secondary" href="https://github.com/MTA128/pinshift#download-and-install">Install guide</a><p style="font-size:12px">Android 13+ • No root • Mock-location developer setting required</p></div>
+<div class="phone" aria-label="Illustration of app features; not a device screenshot"><div class="screenstatus">GOOSEROUTE • ROUTE STUDIO</div><img class="screenicon" src="logo.svg" alt="goose pin"><div class="screenmap"><div class="path"></div></div><div class="screenbutton">PREVIEW ROUTE</div></div>
+</section>
+<h2>More than a pin on a map</h2><div class="grid">
+<div class="card"><h3>📍 Precise points</h3><p>Choose a map pin, paste latitude and longitude or look up addresses.</p></div>
+<div class="card"><h3>🚶 Walk • 🚲 Cycle • 🚗 Drive</h3><p>Preview routes snapped to a real mapped network before playback.</p></div>
+<div class="card"><h3>⏱ Your average, your time</h3><p>GooseRoute searches for a route of the distance implied by your speed and duration; if it can't match closely, it says so.</p></div>
+<div class="card"><h3>〰 Gentle speed variation</h3><p>Playback follows the route polyline, with smooth speed changes around your trip-average speed.</p></div>
+<div class="card"><h3>★ Save favourite places</h3><p>Keep your favourites and recently used places locally on your phone.</p></div>
+<div class="card"><h3>🔒 No account</h3><p>No analytics SDK or account required. Map, geocoding and route services do receive relevant requests.</p></div></div>
+<h2>Install in a few steps</h2><ol><li>Download the APK from the latest GitHub release.</li><li>Install it with Samsung My Files / Android Files.</li><li>Select GooseRoute under Developer options → Select mock location app.</li><li>Pick coordinates, preview a route and start testing.</li></ol>
+<div class="notice"><b>Important:</b> GooseRoute is a beta simulator, not a way to hide mock-location status from other apps. Android labels mock locations, and third-party services may detect or ignore them. Route previews use a rate-limited public routing demonstration server; availability and exact requested durations are not guaranteed. Beta APKs may be signed with different debug keys across builds.</div>
+<footer>Made by Goose / <a href="https://github.com/MTA128">@MTA128</a> · <a href="https://github.com/MTA128/pinshift/issues">Report a bug</a> · <a href="https://github.com/MTA128/pinshift/blob/main/PRIVACY.md">Privacy</a> · Map data © OpenStreetMap contributors</footer>
+</div></body></html>

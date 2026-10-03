@@ -1,0 +1,32 @@
+name: Bug report
+description: Report a GooseRoute beta problem (please redact personal coordinates)
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: input
+    id: device
+    attributes:
+      label: Device model
+      placeholder: Samsung Galaxy S21
+    validations:
+      required: true
+  - type: input
+    id: android
+    attributes:
+      label: Android version
+      placeholder: Android 15
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: Describe the feature, travel mode and steps. Do not post precise home coordinates.
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: Expected vs actual
+    validations:
+      required: true
