@@ -572,7 +572,7 @@ private fun Studio(activity: MainActivity) {
                             fontSize = 11.sp, modifier = Modifier.weight(1f))
                         Text(String.format(Locale.UK, "%.0f km/h",speed), color = Mint, fontWeight = FontWeight.Bold)
                     }
-                    Slider(value = speed, onValueChange = { speed = it; invalidateRoute() },
+                    Slider(value = speed, onValueChange = { speed = it.roundToInt().toFloat(); invalidateRoute() },
                         valueRange = 1f..110f)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("TARGET DURATION", color = Subtle, fontWeight = FontWeight.Bold,
