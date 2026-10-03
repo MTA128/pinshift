@@ -213,10 +213,14 @@ private fun Studio(activity: MainActivity) {
             !routeMode || mapEdit == PinEdit.DESTINATION -> select(lat, lon, true)
             mapEdit == PinEdit.START -> {
                 setStart(lat, lon)
+                latitudeText = String.format(Locale.US, "%.6f", selectedLat)
+                longitudeText = String.format(Locale.US, "%.6f", selectedLon)
                 mapEdit = PinEdit.DESTINATION
             }
             mapEdit == PinEdit.WAYPOINT -> {
                 addWaypoint(lat, lon)
+                latitudeText = String.format(Locale.US, "%.6f", selectedLat)
+                longitudeText = String.format(Locale.US, "%.6f", selectedLon)
                 mapEdit = PinEdit.DESTINATION
             }
         }
