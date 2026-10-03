@@ -111,7 +111,7 @@ class MockLocationService : Service() {
                 if (!valid(a,b) || values.size < 4 || values.size % 2 != 0 || values.size > 1600)
                     throw IllegalArgumentException("Invalid routed path")
                 val road = values.toList().chunked(2).map { Pair(it[0],it[1]) }
-                if (road.any { !valid(it.first,it.second) })
+                if (road.any { !RouteGeometry.valid(it.first,it.second) })
                     throw IllegalArgumentException("Invalid route points")
                 val pathMetres = pathDistance(road)
                 if (pathMetres < 5.0) throw IllegalArgumentException("Route is too short")
@@ -193,14 +193,14 @@ class MockLocationService : Service() {
         }
     }
 
-    private fun progress(route: Route) =
-        if (route.metres < 0.5) 1.0 else {
-            val elapsed = (SystemClock.elapsedRealtime()-route.startedAt).coerceAtLeast(0L)/1000.0
-            val total = route.metres/route.speedMetresPerSecond
-            val x = (elapsed/total).coerceIn(0.0,1.0)
-            // A smooth varying speed profile with the same average over the whole route.
-            RouteTiming.distanceFraction(x)
-        }
+    private fun elapsedFraction(route: Route): Double {
+        if (route.metres < 0.5) return 1.0
+        val elapsed = (SystemClock.elapsedRealtime() - route.startedAt).coerceAtLeast(0L) / 1000.0
+        val total = route.metres / route.speedMetresPerSecond
+        return (elapsed / total).coerceIn(0.0, 1.0)
+    }
+
+    private fun progress(route: Route) = RouteTiming.distanceFraction(elapsedFraction(route))
 
     private fun advanceRoute() {
         val current = route ?: return
@@ -209,7 +209,7 @@ class MockLocationService : Service() {
         latitude = coordinates.first
         longitude = coordinates.second
         speedMs = (current.speedMetresPerSecond *
-            (1.0 + 0.18*sin(2.0*Math.PI*p))).toFloat().coerceAtLeast(0f)
+            RouteTiming.speedMultiplier(elapsedFraction(current))).toFloat().coerceAtLeast(0f)
         if (p >= 1.0) {
             route = null
             speedMs = 0f
@@ -234,25 +234,13 @@ class MockLocationService : Service() {
         return ((Math.toDegrees(atan2(y, x)) + 360.0) % 360.0).toFloat()
     }
 
-    private fun pathDistance(points: List<Pair<Double,Double>>): Double {
-        return points.zipWithNext().sumOf { (a,b) -> metres(a.first,a.second,b.first,b.second) }
-    }
-    private fun interpolateRoad(points: List<Pair<Double,Double>>, fraction: Double): Pair<Double,Double> {
-        if (fraction <= 0.0) return points.first()
-        if (fraction >= 1.0) return points.last()
-        val distance = pathDistance(points)
-        var remaining = distance * fraction
-        for (i in 0 until points.lastIndex) {
-            val a=points[i]; val b=points[i+1]
-            val segment=metres(a.first,a.second,b.first,b.second)
-            if (remaining <= segment && segment > 0.0) {
-                val blend=(remaining/segment).coerceIn(0.0,1.0)
-                bearing=direction(a.first,a.second,b.first,b.second)
-                return Pair(a.first+(b.first-a.first)*blend,a.second+(b.second-a.second)*blend)
-            }
-            remaining -= segment
-        }
-        return points.last()
+    private fun pathDistance(points: List<Pair<Double, Double>>): Double =
+        RouteGeometry.pathMetres(points)
+
+    private fun interpolateRoad(points: List<Pair<Double, Double>>, fraction: Double): Pair<Double, Double> {
+        val next = RouteGeometry.atFraction(points, fraction)
+        bearing = next.bearing
+        return Pair(next.latitude, next.longitude)
     }
 
     private fun notification(): Notification {
