@@ -8,7 +8,9 @@ import java.util.Locale
 import kotlin.math.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.withContext
+import kotlin.coroutines.coroutineContext
 
 enum class TravelMode(val title: String, val profile: String, val suggestedKmh: Float) {
     WALK("Walk", "foot", 5f), CYCLE("Cycle", "bike", 16f), DRIVE("Drive", "car", 40f)
@@ -23,42 +25,22 @@ data class PlannedRoute(
     val actualMinutes: Double,
     val from: GeoPoint,
     val to: GeoPoint,
-    val candidatesTried: Int
+    val candidatesTried: Int,
+    val waypoints: List<GeoPoint> = emptyList(),
+    val autoFit: Boolean = true,
+    val preferredSide: DetourSide = DetourSide.EITHER
 ) {
+    val targetDistanceMetres get() = RouteFit.targetDistanceMetres(averageKmh.toDouble(), targetMinutes)
     val errorPercent get() = 100 * abs(actualMinutes - targetMinutes) / targetMinutes
-    val withinTolerance get() = errorPercent <= 10.0
+    val withinTolerance get() = errorPercent <= 5.0
 }
 
 class RoutingClient {
     private data class Response(val points: List<GeoPoint>, val metres: Double)
 
-    private fun length(a: GeoPoint, b: GeoPoint): Double {
-        val lat1 = Math.toRadians(a.latitude)
-        val lat2 = Math.toRadians(b.latitude)
-        val dLat = lat2 - lat1
-        val dLon = Math.toRadians(b.longitude - a.longitude)
-        val h = sin(dLat / 2).pow(2.0) + cos(lat1) * cos(lat2) * sin(dLon / 2).pow(2.0)
-        return 6371000.0 * 2 * atan2(sqrt(h.coerceIn(0.0, 1.0)), sqrt((1-h).coerceAtLeast(0.0)))
-    }
-
-    private fun project(p: GeoPoint, heading: Double, metres: Double): GeoPoint {
-        val phi = Math.toRadians(p.latitude)
-        val lambda = Math.toRadians(p.longitude)
-        val theta = Math.toRadians(heading)
-        val delta = metres / 6371000.0
-        val newPhi = asin(sin(phi)*cos(delta) + cos(phi)*sin(delta)*cos(theta))
-        val newLambda = lambda + atan2(sin(theta)*sin(delta)*cos(phi), cos(delta)-sin(phi)*sin(newPhi))
-        return GeoPoint(Math.toDegrees(newPhi), Math.toDegrees(newLambda))
-    }
-
-    private fun bearing(a: GeoPoint, b: GeoPoint): Double {
-        val p1 = Math.toRadians(a.latitude)
-        val p2 = Math.toRadians(b.latitude)
-        val delta = Math.toRadians(b.longitude-a.longitude)
-        val y = sin(delta)*cos(p2)
-        val x = cos(p1)*sin(p2) - sin(p1)*cos(p2)*cos(delta)
-        return (Math.toDegrees(atan2(y,x)) + 360) % 360
-    }
+    private fun length(a: GeoPoint, b: GeoPoint): Double = RouteGeometry.segmentMetres(
+        Pair(a.latitude, a.longitude), Pair(b.latitude, b.longitude)
+    )
 
     private fun request(mode: TravelMode, stops: List<GeoPoint>): Response {
         val positions = stops.joinToString(";") {
@@ -70,76 +52,144 @@ class RoutingClient {
         val conn = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10000
             readTimeout = 20000
-            setRequestProperty("User-Agent","GooseRoute/3.0 (MTA128; github.com/MTA128/pinshift)")
-            setRequestProperty("Accept","application/json")
+            setRequestProperty("User-Agent", "GooseRoute/3.1 (github.com/MTA128/pinshift)")
+            setRequestProperty("Accept", "application/json")
         }
         try {
             val code = conn.responseCode
-            if (code == 429) error("Public route server is busy; try again later")
+            if (code == 429) error("Public route service is busy (rate limit). Try again shortly.")
             if (code !in 200..299) error("Routing service error (HTTP " + code + ")")
             val json = JSONObject(conn.inputStream.bufferedReader().use { it.readText() })
-            if (json.optString("code") != "Ok") error("No road/path route found for this mode and location")
-            val item = json.getJSONArray("routes").getJSONObject(0)
+            if (json.optString("code") != "Ok") error("No routable road or path connects these stops.")
+            val routes = json.getJSONArray("routes")
+            if (routes.length() == 0) error("The routing service found no matching road or path.")
+            val item = routes.getJSONObject(0)
             val geometry = item.getJSONObject("geometry").getJSONArray("coordinates")
-            val points = (0 until geometry.length()).map { i ->
-                val coordinate = geometry.getJSONArray(i)
+            val points = (0 until geometry.length()).map { index ->
+                val coordinate = geometry.getJSONArray(index)
                 GeoPoint(coordinate.getDouble(1), coordinate.getDouble(0))
             }
-            if (points.size < 2) error("Routing service returned no route shape")
-            return Response(points, item.getDouble("distance"))
+            if (points.size < 2) error("No route shape was returned.")
+            val distance = item.getDouble("distance")
+            if (!distance.isFinite() || distance < 0) error("Routing service returned invalid distance.")
+            return Response(points, distance)
         } finally { conn.disconnect() }
     }
 
+    private fun asPlan(response: Response, start: GeoPoint, end: GeoPoint,
+                       mode: TravelMode, speed: Float, minutes: Int, attempted: Int,
+                       via: List<GeoPoint>, fit: Boolean, side: DetourSide): PlannedRoute {
+        val points = response.points
+        // Bound the payload sent to the Android foreground service.
+        val shaped = if (points.size <= 600) points else (0 until 600).map { index ->
+            points[(index.toDouble() * points.lastIndex / 599).roundToInt().coerceIn(0, points.lastIndex)]
+        }
+        // Use the actual playback polyline's length for an honest duration estimate.
+        val playbackMetres = shaped.zipWithNext().sumOf { (a, b) -> length(a, b) }
+        val actualMinutes = playbackMetres / (speed.toDouble() * 1000.0 / 60.0)
+        return PlannedRoute(mode, shaped, playbackMetres, speed, minutes, actualMinutes,
+            start, end, attempted, via.toList(), fit, side)
+    }
+
+    /**
+     * Finds mapped routes while holding the requested average speed fixed.
+     * Auto-fit varies *road-snapped* detour points, preserving manual waypoints in order.
+     * Returns the closest route found; does not claim an exact fit if none exists.
+     */
     suspend fun generate(start: GeoPoint, end: GeoPoint, mode: TravelMode,
-                         speed: Float, minutes: Int): PlannedRoute = withContext(Dispatchers.IO) {
-        require(speed in 1f..110f && minutes in 5..240) { "Select 1–110 km/h and 5–240 minutes" }
-        val targetLength = speed * 1000.0 * minutes / 60.0
-        val direct = length(start, end)
-        if (targetLength < direct * .95) {
-            error("Requested speed and duration cover " +
-                String.format(Locale.UK,"%.1f", targetLength/1000) +
-                " km, but the destination is at least " +
-                String.format(Locale.UK,"%.1f", direct/1000) +
-                " km away. Increase duration or choose another destination.")
+                         speed: Float, minutes: Int,
+                         via: List<GeoPoint> = emptyList(),
+                         autoFit: Boolean = true,
+                         side: DetourSide = DetourSide.EITHER): PlannedRoute = withContext(Dispatchers.IO) {
+        require(speed.isFinite() && speed in 1f..110f && minutes in 5..240) {
+            "Choose 1–110 km/h and a target of 5–240 minutes."
         }
-        val loop = direct < 50
-        val heading = if (loop) 30.0 else bearing(start,end)
-        val middle = if (loop) start else project(start,heading,direct/2)
-        val radius = if (loop) targetLength/4.8 else (targetLength-direct).coerceAtLeast(150.0)/2.0
-        val options = ArrayList<List<GeoPoint>>()
-        if (!loop) options.add(listOf(start,end))
-        if (loop) {
-            options.add(listOf(start,project(start,heading,radius),project(start,heading+95,radius),start))
-            options.add(listOf(start,project(start,heading+40,radius*1.25),project(start,heading+155,radius*1.25),start))
-            options.add(listOf(start,project(start,heading+120,radius*1.5),project(start,heading+240,radius*1.5),start))
-        } else {
-            options.add(listOf(start,project(middle,heading+90,radius),end))
-            options.add(listOf(start,project(middle,heading-90,radius),end))
-            options.add(listOf(start,project(middle,heading+90,radius*1.6),end))
+        require(via.size <= 5) { "Up to five custom waypoints are supported." }
+        val stops = listOf(start) + via + listOf(end)
+        require(stops.all { RouteGeometry.valid(it.latitude, it.longitude) }) {
+            "A point lies outside valid GPS coordinates."
         }
-        var best: Response? = null
-        var attempted = 0
-        var issue: String? = null
-        for (option in options.take(4)) {
-            if (attempted > 0) delay(1200)
-            attempted++
-            try {
-                val candidate = request(mode,option)
-                if (best == null || abs(candidate.metres-targetLength) < abs(best.metres-targetLength)) {
-                    best = candidate
+        val targetMetres = RouteFit.targetDistanceMetres(speed.toDouble(), minutes)
+        val directMinimum = stops.zipWithNext().sumOf { (a, b) -> length(a, b) }
+        if (targetMetres < directMinimum * 0.985) error(
+            "These stops are at least " + String.format(Locale.UK, "%.2f", directMinimum / 1000.0) +
+            " km apart. Your speed and time cover only " +
+            String.format(Locale.UK, "%.2f", targetMetres / 1000.0) +
+            " km. Remove a waypoint, shorten the trip or change the target."
+        )
+
+        // Start by measuring a real routed baseline, not a straight-line estimate.
+        val baseline = if (stops.size == 2 && length(start, end) < 10.0) {
+            Response(listOf(start, end), 0.0)
+        } else request(mode, stops)
+        var best = baseline
+        var attempted = if (baseline.metres == 0.0 && length(start, end) < 10.0 && via.isEmpty()) 0 else 1
+        var lastError: String? = null
+
+        if (targetMetres < baseline.metres * 0.985) error(
+            "The shortest mapped route through your chosen stops is about " +
+            String.format(Locale.UK, "%.2f", baseline.metres / 1000.0) +
+            " km. Your speed and duration require " +
+            String.format(Locale.UK, "%.2f", targetMetres / 1000.0) +
+            " km. Remove a waypoint, adjust the end point or allow more time."
+        )
+        if (!autoFit || RouteFit.accepted(baseline.metres, targetMetres)) {
+            return@withContext asPlan(baseline, start, end, mode, speed, minutes,
+                attempted, via, autoFit, side)
+        }
+
+        val points = stops.map { RouteFit.Point(it.latitude, it.longitude) }
+        val longestLeg = RouteFit.mainLeg(points)
+        val sides = when (side) {
+            DetourSide.EITHER -> listOf(true, false)
+            DetourSide.LEFT -> listOf(false)
+            DetourSide.RIGHT -> listOf(true)
+        }
+        var bestRadius = RouteFit.startingRadius(points, baseline.metres, targetMetres)
+        val maxTries = if (sides.size == 2) 5 else 8
+
+        // Adjust the detour size using road distances measured by the routing backend.
+        for (clockwise in sides) {
+            var radius = bestRadius
+            var lower = 0.0
+            var upper = Double.POSITIVE_INFINITY
+            repeat(maxTries) {
+                coroutineContext.ensureActive()
+                if (RouteFit.accepted(best.metres, targetMetres)) return@withContext asPlan(
+                    best, start, end, mode, speed, minutes, attempted, via, autoFit, side)
+                if (attempted > 0) delay(1150L) // respect public demo server request interval
+                val candidateStops = RouteFit.detour(points, radius, clockwise, longestLeg)
+                    .map { GeoPoint(it.lat, it.lon) }
+                try {
+                    val candidate = request(mode, candidateStops)
+                    attempted++
+                    if (abs(candidate.metres - targetMetres) < abs(best.metres - targetMetres)) {
+                        best = candidate
+                        bestRadius = radius
+                    }
+                    if (candidate.metres < targetMetres) {
+                        lower = radius
+                        radius = if (upper.isFinite()) (lower + upper) / 2 else (radius * 1.7)
+                    } else {
+                        upper = radius
+                        radius = if (lower > 0) (lower + upper) / 2 else (radius * 0.56)
+                    }
+                } catch (error: Exception) {
+                    if (error is kotlinx.coroutines.CancellationException) throw error
+                    lastError = error.localizedMessage
+                    if (lastError?.contains("rate limit", ignoreCase = true) == true) {
+                        return@withContext if (attempted > 0) asPlan(best, start, end,
+                            mode, speed, minutes, attempted, via, autoFit, side)
+                        else throw error
+                    }
+                    radius = (radius * 0.73).coerceAtLeast(80.0)
                 }
-                if (best != null && abs(best.metres-targetLength)/targetLength < .07) break
-            } catch (e: Exception) {
-                issue=e.message
-                if (issue?.contains("busy") == true) break
+                radius = radius.coerceIn(80.0, 120000.0)
             }
         }
-        val chosen = best ?: error(issue ?: "No valid route was found")
-        val actual = chosen.metres / (speed.toDouble() * 1000 / 60.0)
-        val pts = chosen.points
-        val simplified = if (pts.size <= 450) pts else (0 until 450).map { i ->
-            pts[(i.toDouble() * pts.lastIndex / 449).roundToInt().coerceIn(0,pts.lastIndex)]
-        }
-        PlannedRoute(mode, simplified, chosen.metres, speed, minutes, actual, start, end, attempted)
+        if (best.metres < 1.0) error(
+            lastError ?: "No road or path could be generated for this journey."
+        )
+        asPlan(best, start, end, mode, speed, minutes, attempted, via, autoFit, side)
     }
 }
