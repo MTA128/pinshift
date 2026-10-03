@@ -18,4 +18,9 @@ object RouteTiming {
         val x = elapsedFraction.coerceIn(0.0,1.0)
         return (x + 0.18 / (2.0 * PI) * (1 - cos(2.0 * PI * x))).coerceIn(0.0,1.0)
     }
+    /** Derivative of distanceFraction with respect to elapsed time. */
+    fun speedMultiplier(elapsedFraction: Double): Double {
+        val x = elapsedFraction.coerceIn(0.0, 1.0)
+        return 1.0 + 0.18 * kotlin.math.sin(2.0 * PI * x)
+    }
 }
