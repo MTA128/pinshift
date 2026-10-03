@@ -11,9 +11,9 @@ android {
         applicationId = "com.goose.pinshift"
         minSdk = 33
         targetSdk = 34
-        versionCode = 4
+        versionCode = 5
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        versionName = "3.1.0-beta.2"
+        versionName = "3.1.0-beta.3"
     }
     buildFeatures {
         compose = true

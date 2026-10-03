@@ -1,6 +1,6 @@
 # Changelog
 
-## 3.1.0-beta.2 — Custom route planner
+## 3.1.0-beta.3 — Custom route planner
 - Added up to five manual route waypoints that can be moved, reordered or deleted.
 - Start and destination now editable separately from the map and address search.
 - Added a destination-distance fitter with side preference (either, left or right) and optional disable switch.
