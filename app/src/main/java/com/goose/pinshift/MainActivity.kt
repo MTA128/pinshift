@@ -780,13 +780,27 @@ private fun distance(lat1: Double, lon1: Double, lat2: Double, lon2: Double): Do
 }
 
 @Composable
-private fun LocationMap(lat: Double, lon: Double, focusRequest: Int,
-                        routePoints: List<GeoPoint>, onPicked: (Double, Double) -> Unit) {
+private fun LocationMap(
+    lat: Double,
+    lon: Double,
+    focusRequest: Int,
+    routePoints: List<GeoPoint>,
+    routeStart: GeoPoint?,
+    viaPoints: List<GeoPoint>,
+    onPicked: (Double, Double) -> Unit,
+    onStartDragged: (Double, Double) -> Unit,
+    onWaypointDragged: (Int, Double, Double) -> Unit,
+    onDestinationDragged: (Double, Double) -> Unit
+) {
     val context = LocalContext.current
     val currentPick by rememberUpdatedState(onPicked)
+    val currentStartDrag by rememberUpdatedState(onStartDragged)
+    val currentViaDrag by rememberUpdatedState(onWaypointDragged)
+    val currentEndDrag by rememberUpdatedState(onDestinationDragged)
     val lastFocus = remember { intArrayOf(-1) }
+
     val map = remember(context) {
-        Configuration.getInstance().userAgentValue = "PinShift/2.0 (Personal Location Studio)"
+        Configuration.getInstance().userAgentValue = "GooseRoute/3.1 (github.com/MTA128/pinshift)"
         Configuration.getInstance().osmdroidBasePath = java.io.File(context.cacheDir, "osmdroid")
         Configuration.getInstance().osmdroidTileCache = java.io.File(context.cacheDir, "osmdroid/tiles")
         MapView(context).apply {
@@ -802,45 +816,89 @@ private fun LocationMap(lat: Double, lon: Double, focusRequest: Int,
                 override fun longPressHelper(point: GeoPoint): Boolean = false
             }))
             overlays.add(Polyline(this).apply {
-                outlinePaint.color = AndroidColor.rgb(95,227,188)
+                outlinePaint.color = AndroidColor.rgb(95, 227, 188)
                 outlinePaint.strokeWidth = 10f
             })
-            val pin = Marker(this).apply {
+            val destination = Marker(this).apply {
                 position = GeoPoint(lat, lon)
                 isDraggable = true
-                title = "Selected PinShift location"
+                title = "Route destination"
                 setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
                 setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
                     override fun onMarkerDragStart(marker: Marker) {}
                     override fun onMarkerDrag(marker: Marker) {}
                     override fun onMarkerDragEnd(marker: Marker) {
-                        currentPick(marker.position.latitude, marker.position.longitude)
+                        currentEndDrag(marker.position.latitude, marker.position.longitude)
                     }
                 })
             }
-            overlays.add(pin)
+            overlays.add(destination)
             controller.setCenter(GeoPoint(lat, lon))
             setOnTouchListener { view, event ->
                 view.parent?.requestDisallowInterceptTouchEvent(
-                    event.actionMasked != MotionEvent.ACTION_UP && event.actionMasked != MotionEvent.ACTION_CANCEL
+                    event.actionMasked != MotionEvent.ACTION_UP &&
+                        event.actionMasked != MotionEvent.ACTION_CANCEL
                 )
                 false
             }
         }
     }
+
     DisposableEffect(map) {
         map.onResume()
-        onDispose { map.onPause(); map.onDetach() }
+        onDispose {
+            map.onPause()
+            map.onDetach()
+        }
     }
-    AndroidView(factory = { map }, update = {
-        (it.overlays.firstOrNull { overlay -> overlay is Marker } as? Marker)
-            ?.position = GeoPoint(lat, lon)
-        (it.overlays.firstOrNull { overlay -> overlay is Polyline } as? Polyline)
-            ?.setPoints(routePoints)
+
+    AndroidView(factory = { map }, update = { view ->
+        val overlays = view.overlays
+        (overlays.firstOrNull {
+            it is Marker && it.title == "Route destination"
+        } as? Marker)?.position = GeoPoint(lat, lon)
+        (overlays.firstOrNull { it is Polyline } as? Polyline)?.setPoints(routePoints)
+
+        overlays.removeAll {
+            it is Marker && (it.title == "Route start" || it.title?.startsWith("Waypoint #") == true)
+        }
+
+        if (routeStart != null) {
+            val startMarker = Marker(view).apply {
+                position = GeoPoint(routeStart.latitude, routeStart.longitude)
+                title = "Route start"
+                isDraggable = true
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
+                    override fun onMarkerDragStart(marker: Marker) {}
+                    override fun onMarkerDrag(marker: Marker) {}
+                    override fun onMarkerDragEnd(marker: Marker) {
+                        currentStartDrag(marker.position.latitude, marker.position.longitude)
+                    }
+                })
+            }
+            overlays.add(startMarker)
+        }
+        viaPoints.forEachIndexed { index, via ->
+            val pointMarker = Marker(view).apply {
+                position = GeoPoint(via.latitude, via.longitude)
+                title = "Waypoint #" + (index + 1)
+                isDraggable = true
+                setAnchor(Marker.ANCHOR_CENTER, Marker.ANCHOR_BOTTOM)
+                setOnMarkerDragListener(object : Marker.OnMarkerDragListener {
+                    override fun onMarkerDragStart(marker: Marker) {}
+                    override fun onMarkerDrag(marker: Marker) {}
+                    override fun onMarkerDragEnd(marker: Marker) {
+                        currentViaDrag(index, marker.position.latitude, marker.position.longitude)
+                    }
+                })
+            }
+            overlays.add(pointMarker)
+        }
         if (lastFocus[0] != focusRequest) {
-            it.controller.setCenter(GeoPoint(lat, lon))
+            view.controller.setCenter(GeoPoint(lat, lon))
             lastFocus[0] = focusRequest
         }
-        it.invalidate()
+        view.invalidate()
     }, modifier = Modifier.fillMaxWidth().height(323.dp).clip(RoundedCornerShape(24.dp)))
 }
