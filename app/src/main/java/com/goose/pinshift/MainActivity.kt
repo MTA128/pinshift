@@ -487,7 +487,7 @@ private fun Studio(activity: MainActivity) {
                 Column(Modifier.fillMaxWidth().padding(15.dp)) {
                     Text("REAL ROAD & PATH ROUTING", fontSize = 12.sp,
                         color = White, fontWeight = FontWeight.Bold, letterSpacing = 0.7.sp)
-                    Text("Tap the map to set the destination. Preview the route before starting.",
+                    Text("Choose the start, destination and up to five custom stops. We show a route line only after real road routing succeeds.",
                         color = Subtle, fontSize = 12.sp, lineHeight = 17.sp)
                     Spacer(Modifier.height(10.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -501,31 +501,120 @@ private fun Studio(activity: MainActivity) {
                     }
                     Text("Start: " + displayPoint(startLat,startLon), color = Subtle, fontSize = 11.sp)
                     Text("Destination: " + displayPoint(selectedLat,selectedLon), color = Subtle, fontSize = 11.sp)
-                    TextButton(onClick = {
-                        startLat = selectedLat; startLon = selectedLon; routeRequestId++; routePreview = null; planning = false
-                        detail = "New route start set. Choose an end point on the map."
-                    }) { Text("USE PIN AS ROUTE START", fontSize = 11.sp) }
+                    Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                        FilterChip(selected = mapEdit == PinEdit.DESTINATION,
+                            onClick = { mapEdit = PinEdit.DESTINATION },
+                            label = { Text("End", fontSize = 11.sp) })
+                        FilterChip(selected = mapEdit == PinEdit.START,
+                            onClick = { mapEdit = PinEdit.START; detail = "Tap the map to choose the route start." },
+                            label = { Text("Start", fontSize = 11.sp) })
+                        FilterChip(selected = mapEdit == PinEdit.WAYPOINT,
+                            onClick = { mapEdit = PinEdit.WAYPOINT; detail = "Tap the map to add a custom waypoint." },
+                            label = { Text("+ Waypoint", fontSize = 11.sp) })
+                    }
+                    Text("Tap the map, search an address or apply coordinates to your selected editing mode. You can also drag route markers.",
+                        fontSize = 11.sp, color = Subtle, lineHeight = 16.sp)
+                    Text("CUSTOM WAYPOINTS (" + waypointList.size + "/5)",
+                        fontSize = 11.sp, fontWeight = FontWeight.Bold, color = White,
+                        modifier = Modifier.padding(top = 12.dp, bottom = 4.dp))
+                    if (waypointList.isEmpty()) {
+                        Text("No intermediate stops. Choose + Waypoint, then tap the map.",
+                            color = Subtle, fontSize = 11.sp)
+                    }
+                    waypointList.forEachIndexed { index, waypoint ->
+                        Row(verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()) {
+                            Text((index + 1).toString() + ". " + displayPoint(waypoint.latitude, waypoint.longitude),
+                                modifier = Modifier.weight(1f), color = White, fontSize = 11.sp)
+                            TextButton(onClick = {
+                                if (index > 0) {
+                                    waypointList = waypointList.toMutableList().apply {
+                                        val item = removeAt(index)
+                                        add(index - 1, item)
+                                    }
+                                    invalidateRoute()
+                                }
+                            }, enabled = index > 0, contentPadding = PaddingValues(3.dp)) {
+                                Text("↑", fontSize = 18.sp)
+                            }
+                            TextButton(onClick = {
+                                if (index < waypointList.lastIndex) {
+                                    waypointList = waypointList.toMutableList().apply {
+                                        val item = removeAt(index)
+                                        add(index + 1, item)
+                                    }
+                                    invalidateRoute()
+                                }
+                            }, enabled = index < waypointList.lastIndex,
+                                contentPadding = PaddingValues(3.dp)) {
+                                Text("↓", fontSize = 18.sp)
+                            }
+                            TextButton(onClick = {
+                                waypointList = waypointList.filterIndexed { i, _ -> i != index }
+                                invalidateRoute()
+                            }, contentPadding = PaddingValues(3.dp)) {
+                                Text("×", fontSize = 20.sp)
+                            }
+                        }
+                    }
+                    if (waypointList.isNotEmpty()) {
+                        TextButton(onClick = {
+                            waypointList = emptyList()
+                            invalidateRoute()
+                        }) { Text("CLEAR ALL WAYPOINTS", fontSize = 11.sp) }
+                    }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("AVERAGE SPEED", color = Subtle, fontWeight = FontWeight.Bold,
                             fontSize = 11.sp, modifier = Modifier.weight(1f))
                         Text(String.format(Locale.UK, "%.0f km/h",speed), color = Mint, fontWeight = FontWeight.Bold)
                     }
-                    Slider(value = speed, onValueChange = { speed = it; routeRequestId++; routePreview = null; planning = false },
+                    Slider(value = speed, onValueChange = { speed = it; invalidateRoute() },
                         valueRange = 1f..110f)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("TARGET DURATION", color = Subtle, fontWeight = FontWeight.Bold,
                             fontSize = 11.sp, modifier = Modifier.weight(1f))
                         Text(minutes.toInt().toString() + " minutes", color = Mint, fontWeight = FontWeight.Bold)
                     }
-                    Slider(value = minutes, onValueChange = { minutes = (it / 5f).toInt() * 5f; routeRequestId++; routePreview = null; planning = false },
+                    Slider(value = minutes, onValueChange = { minutes = it.roundToInt().toFloat(); invalidateRoute() },
                         valueRange = 5f..240f)
-                    Text("Target distance: " + String.format(Locale.UK,"%.2f km",
-                        speed * minutes / 60f) + "  (average speed × time)",
-                        color = Subtle, fontSize = 11.sp)
+                    Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                        listOf(15, 30, 45, 60).forEach { value ->
+                            AssistChip(onClick = { minutes = value.toFloat(); invalidateRoute() },
+                                label = { Text(value.toString() + "m", fontSize = 10.sp) })
+                        }
+                    }
+                    Text("Required length: " + String.format(Locale.UK,"%.2f km",
+                        speed * minutes / 60f) + " at " + String.format(Locale.UK, "%.0f", speed) +
+                        " km/h over " + minutes.toInt() + " min",
+                        color = Mint, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text("Fit route to required distance", color = White, fontSize = 12.sp,
+                            modifier = Modifier.weight(1f))
+                        Switch(checked = autoFit, onCheckedChange = {
+                            autoFit = it
+                            invalidateRoute()
+                        })
+                    }
+                    if (autoFit) {
+                        Text("Detour preference", color = Subtle, fontSize = 11.sp)
+                        Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+                            DetourSide.entries.forEach { choice ->
+                                FilterChip(selected = detourSide == choice,
+                                    onClick = { detourSide = choice; invalidateRoute() },
+                                    label = { Text(when(choice) {
+                                        DetourSide.EITHER -> "Either"
+                                        DetourSide.LEFT -> "Left"
+                                        DetourSide.RIGHT -> "Right"
+                                    }, fontSize = 11.sp) })
+                            }
+                        }
+                        Text("The planner tests road-snapped detours without changing your average speed or ignoring custom stops.",
+                            color = Subtle, fontSize = 11.sp, lineHeight = 16.sp)
+                    }
                     Spacer(Modifier.height(8.dp))
                     Button(onClick = { prepareRoute() }, enabled = !planning,
                         modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp)) {
-                        Text(if (planning) "PLANNING..." else "GENERATE ROAD/PATH ROUTE")
+                        Text(if (planning) "SEARCHING REAL ROADS..." else "GENERATE FITTED ROAD ROUTE")
                     }
                     routePreview?.let { plan ->
                         Spacer(Modifier.height(10.dp))
@@ -536,17 +625,21 @@ private fun Studio(activity: MainActivity) {
                             "  •  " + String.format(Locale.UK,"%.1f min",plan.actualMinutes),
                             color = White, fontWeight = FontWeight.SemiBold)
                         Text(if (plan.withinTolerance)
-                            "Within 10% of your duration target."
-                            else "Approximate: requested " + plan.targetMinutes +
-                                " min, actual " + String.format(Locale.UK,"%.1f min",plan.actualMinutes) +
-                                " at your chosen average speed. Your speed has NOT been changed.",
+                            "Within 5% of target. Average speed: " +
+                                String.format(Locale.UK, "%.0f", plan.averageKmh) + " km/h."
+                            else "Closest mapped route takes " +
+                                String.format(Locale.UK, "%.1f", plan.actualMinutes) +
+                                " min, not " + plan.targetMinutes +
+                                " min (difference " + String.format(Locale.UK, "%.1f", plan.errorPercent) +
+                                "%). Speed unchanged; adjust the stops, speed or time.",
                             color = if (plan.withinTolerance) Mint else Color(0xFFFFD080),
                             fontSize = 11.sp)
                     }
                     Spacer(Modifier.height(4.dp))
-                    Text("Snaps to walking/cycling/driving routes when service is available. " +
-                        "The preview is checked before playback. Instantaneous speed varies " +
-                        "while keeping your selected trip-average speed.",
+                    Text("Evaluated " + (routePreview?.candidatesTried ?: 0) +
+                        " road candidate(s). Custom waypoints retain their chosen order. An exact journey length is not always possible.",
+                        color = Subtle, fontSize = 11.sp, lineHeight = 16.sp)
+                    Text("Playback follows actual mapped roads and paths. Instantaneous speed varies slightly while keeping your chosen average.",
                         color = Subtle, fontSize = 11.sp, lineHeight = 16.sp)
                 }
             }
