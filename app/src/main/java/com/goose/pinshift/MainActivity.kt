@@ -145,9 +145,14 @@ private fun Studio(activity: MainActivity) {
     var planning by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
     val router = remember { RoutingClient() }
+    var routeRequestId by remember { mutableIntStateOf(0) }
     fun select(lat: Double, lon: Double, recenter: Boolean) {
         if (!lat.isFinite() || !lon.isFinite() || lat !in -90.0..90.0 || lon !in -180.0..180.0) return
-        if (selectedLat != lat || selectedLon != lon) routePreview = null
+        if (selectedLat != lat || selectedLon != lon) {
+            routeRequestId++
+            routePreview = null
+            planning = false
+        }
         selectedLat = lat
         selectedLon = lon
         latitudeText = String.format(Locale.US, "%.6f", lat)
@@ -169,20 +174,29 @@ private fun Studio(activity: MainActivity) {
     fun prepareRoute() {
         val end = readPoint() ?: return
         val from = GeoPoint(startLat,startLon)
+        val requestId = ++routeRequestId
+        val requestedMode = travelMode
+        val requestedSpeed = speed
+        val requestedMinutes = minutes.toInt()
         planning = true
         routePreview = null
         detail = "Finding roads and paths. This may take several seconds."
         scope.launch {
             try {
-                val result = router.generate(from,end,travelMode,speed,minutes.toInt())
+                val result = router.generate(from, end, requestedMode, requestedSpeed, requestedMinutes)
+                if (routeRequestId != requestId) return@launch
                 routePreview = result
                 detail = if (result.withinTolerance)
                     "Route ready — duration close to your target."
                 else "Closest route found differs from requested duration. Review time before starting."
             } catch (e: Exception) {
-                detail = e.localizedMessage ?: "Routing service is unavailable. Please retry."
-                routePreview = null
-            } finally { planning = false }
+                if (routeRequestId == requestId) {
+                    detail = e.localizedMessage ?: "Routing service is unavailable. Please retry."
+                    routePreview = null
+                }
+            } finally {
+                if (routeRequestId == requestId) planning = false
+            }
         }
     }
 
@@ -200,6 +214,11 @@ private fun Studio(activity: MainActivity) {
             detail = "Generate and review a real road/path route before starting."
             return
         }
+        if (isRoute && routePreview?.let {
+            it.mode != travelMode || it.averageKmh != speed || it.targetMinutes != minutes.toInt() ||
+            kotlin.math.abs(it.from.latitude - startLat) > 0.000001 ||
+            kotlin.math.abs(it.from.longitude - startLon) > 0.000001
+        } == true) { routePreview = null; detail = "Route settings changed. Generate the route again."; return }
         if (isRoute && routePreview?.to?.let {
             kotlin.math.abs(it.latitude-point.latitude) > 0.000001 ||
             kotlin.math.abs(it.longitude-point.longitude) > 0.000001
@@ -398,14 +417,16 @@ private fun Studio(activity: MainActivity) {
                             FilterChip(selected = travelMode == mode, onClick = {
                                 travelMode = mode
                                 speed = mode.suggestedKmh
+                                routeRequestId++
                                 routePreview = null
+                                planning = false
                             }, label = { Text(mode.title, fontSize = 11.sp) })
                         }
                     }
                     Text("Start: " + displayPoint(startLat,startLon), color = Subtle, fontSize = 11.sp)
                     Text("Destination: " + displayPoint(selectedLat,selectedLon), color = Subtle, fontSize = 11.sp)
                     TextButton(onClick = {
-                        startLat = selectedLat; startLon = selectedLon; routePreview = null
+                        startLat = selectedLat; startLon = selectedLon; routeRequestId++; routePreview = null; planning = false
                         detail = "New route start set. Choose an end point on the map."
                     }) { Text("USE PIN AS ROUTE START", fontSize = 11.sp) }
                     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -413,14 +434,14 @@ private fun Studio(activity: MainActivity) {
                             fontSize = 11.sp, modifier = Modifier.weight(1f))
                         Text(String.format(Locale.UK, "%.0f km/h",speed), color = Mint, fontWeight = FontWeight.Bold)
                     }
-                    Slider(value = speed, onValueChange = { speed = it; routePreview = null },
+                    Slider(value = speed, onValueChange = { speed = it; routeRequestId++; routePreview = null; planning = false },
                         valueRange = 1f..110f)
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text("TARGET DURATION", color = Subtle, fontWeight = FontWeight.Bold,
                             fontSize = 11.sp, modifier = Modifier.weight(1f))
                         Text(minutes.toInt().toString() + " minutes", color = Mint, fontWeight = FontWeight.Bold)
                     }
-                    Slider(value = minutes, onValueChange = { minutes = (it / 5f).toInt() * 5f; routePreview = null },
+                    Slider(value = minutes, onValueChange = { minutes = (it / 5f).toInt() * 5f; routeRequestId++; routePreview = null; planning = false },
                         valueRange = 5f..240f)
                     Text("Target distance: " + String.format(Locale.UK,"%.2f km",
                         speed * minutes / 60f) + "  (average speed × time)",
